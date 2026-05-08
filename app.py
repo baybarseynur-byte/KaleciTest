@@ -61,7 +61,7 @@ def veri_kaydet_ve_merge(yeni_df):
         yeni_df['Son_Guncelleme'] = datetime.now().strftime("%d.%m.%Y %H:%M")
         pd.concat([mevcut, yeni_df], ignore_index=True).to_csv(DB_FILE, index=False, encoding='utf-16')
 
-# --- 3. PDF ÜRETME (TÜRKÇE KARAKTER VE DÜZEN) ---
+# --- 3. PDF ÜRETME (OTOMATİK YORUMLAMA ENTEGRELİ) ---
 def profesyonel_pdf_uret(secilen, analiz_datalari):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=50, leftMargin=50, topMargin=50, bottomMargin=50)
@@ -72,10 +72,12 @@ def profesyonel_pdf_uret(secilen, analiz_datalari):
     alt_baslik_stili = ParagraphStyle('AltBaslik', parent=styles['Normal'], fontName=FONT, fontSize=11, leading=14)
     tablo_icerik_stili = ParagraphStyle('TabloIcerik', parent=styles['Normal'], fontName=FONT, fontSize=9, alignment=1)
     test_baslik_stili = ParagraphStyle('TestBaslik', parent=styles['Heading2'], fontName=FONT, fontSize=13, spaceBefore=15, color=colors.navy)
+    yorum_stili = ParagraphStyle('Yorum', parent=styles['Normal'], fontName=FONT, fontSize=10, leading=12, italic=True)
 
     akis = []
     akis.append(Paragraph("BİREYSEL PERFORMANS ANALİZ RAPORU", baslik_stili))
     
+    # Sporcu Bilgi Tablosu
     info_data = [
         [Paragraph(f"<b>Ad Soyad:</b> {secilen['Ad']} {secilen['Soyad']}", alt_baslik_stili), 
          Paragraph(f"<b>Grup/Çeyrek:</b> {secilen['Ceyrek']}", alt_baslik_stili)],
@@ -85,26 +87,68 @@ def profesyonel_pdf_uret(secilen, analiz_datalari):
     info_table = Table(info_data, colWidths=[250, 250])
     info_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP'), ('BOTTOMPADDING', (0,0), (-1,-1), 10)]))
     akis.append(info_table)
+    akis.append(Spacer(1, 10))
+
+    # Özet İstatistik Tablosu ve Z-Skor Durum Analizi
+    tablo_verisi = [[Paragraph(f"<b>{h}</b>", tablo_icerik_stili) for h in ["Test Adı", "Skor", "Grup Ort.", "Z-Skor", "Durum"]]]
+    
+    for r in analiz_datalari:
+        z = r['Z-Skor']
+        if z > 1.5: durum = "Üstün"
+        elif z > 0.5: durum = "İyi"
+        elif z > -0.5: durum = "Ortalama"
+        elif z > -1.5: durum = "Geliştirilmeli"
+        else: durum = "Zayıf"
+        
+        tablo_verisi.append([
+            Paragraph(str(r['Test']), tablo_icerik_stili),
+            Paragraph(str(r['Skor']), tablo_icerik_stili),
+            Paragraph(str(r['Grup Ort.']), tablo_icerik_stili),
+            Paragraph(str(z), tablo_icerik_stili),
+            Paragraph(durum, tablo_icerik_stili)
+        ])
+    
+    ozet_tablo = Table(tablo_verisi, colWidths=[130, 60, 70, 60, 70])
+    ozet_tablo.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.whitesmoke), ('GRID', (0, 0), (-1, -1), 0.5, colors.grey), ('ALIGN', (0,0), (-1,-1), 'CENTER')]))
+    akis.append(ozet_tablo)
     akis.append(Spacer(1, 20))
 
-    # Özet İstatistik Tablosu
-    tablo_verisi = [[Paragraph(f"<b>{h}</b>", tablo_icerik_stili) for h in ["Test Adı", "Skor", "Grup Ort.", "Z-Skor", "En İyi", "En Kötü"]]]
+    # Grafikler ve Sözel Yorumlar
     for r in analiz_datalari:
-        tablo_verisi.append([Paragraph(str(r[k]), tablo_icerik_stili) for k in ["Test", "Skor", "Grup Ort.", "Z-Skor", "En İyi", "En Kötü"]])
-    
-    ozet_tablo = Table(tablo_verisi, colWidths=[130, 60, 70, 60, 70, 70])
-    ozet_tablo.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.whitesmoke), ('GRID', (0, 0), (-1, -1), 0.5, colors.grey), ('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
-    akis.append(ozet_tablo)
+        z = r['Z-Skor']
+        if z > 1.0: y_metni = "Bu testte grup ortalamasının belirgin şekilde üzerindesin. Mevcut formunu korumalısın."
+        elif z < -1.0: y_metni = "Bu parametrede grup ortalamasının altındasın. Gelişim için özel odaklanma gereklidir."
+        else: y_metni = "Grup düzeyiyle paralel (ortalama) bir performans sergilemektesin."
 
-    for r in analiz_datalari:
-        test_paketi = [Paragraph(f"• {r['Test']} Analizi", test_baslik_stili), Spacer(1, 10)]
-        plt.figure(figsize=(6, 3))
-        plt.barh(['En Kötü', 'Ortalama', 'Sporcu', 'En İyi'], [float(r['En Kötü']), float(r['Grup Ort.']), float(r['Skor']), float(r['En İyi'])], color=['#ff8a80', '#cfd8dc', '#1a237e', '#81c784'])
+        test_paketi = [
+            Paragraph(f"• {r['Test']} Analizi (Z-Skor: {z})", test_baslik_stili),
+            Paragraph(f"<i>Yorum: {y_metni}</i>", yorum_stili),
+            Spacer(1, 5)
+        ]
+        
+        plt.figure(figsize=(6, 2.8))
+        plt.barh(['En Kötü', 'Ortalama', 'Sporcu', 'En İyi'], 
+                 [float(r['En Kötü']), float(r['Grup Ort.']), float(r['Skor']), float(r['En İyi'])], 
+                 color=['#ff8a80', '#cfd8dc', '#1a237e', '#81c784'])
         plt.tight_layout()
-        img_buf = io.BytesIO(); plt.savefig(img_buf, format='png', dpi=120); plt.close(); img_buf.seek(0)
-        test_paketi.append(Image(img_buf, width=380, height=190))
-        test_paketi.append(Spacer(1, 20))
+        img_buf = io.BytesIO(); plt.savefig(img_buf, format='png', dpi=110); plt.close(); img_buf.seek(0)
+        
+        test_paketi.append(Image(img_buf, width=380, height=170))
+        test_paketi.append(Spacer(1, 15))
         akis.append(KeepTogether(test_paketi))
+
+    # Genel Değerlendirme Notu
+    avg_z = np.mean([r['Z-Skor'] for r in analiz_datalari])
+    akis.append(Spacer(1, 10))
+    akis.append(Paragraph("<b>GENEL DEĞERLENDİRME</b>", test_baslik_stili))
+    if avg_z > 0.5:
+        genel_not = "Genel atletik profiliniz akran grubunuzun üzerindedir. Gelişimi sürdürünüz."
+    elif avg_z < -0.5:
+        genel_not = "Genel performansınız grup ortalamasının altındadır. Temel motorik özelliklere yönelik çalışmalar artırılmalıdır."
+    else:
+        genel_not = "Grup standartlarında bir gelişim göstermektesiniz."
+    
+    akis.append(Paragraph(genel_not, alt_baslik_stili))
 
     doc.build(akis); buf.seek(0)
     return buf
@@ -116,7 +160,6 @@ secilen_profil = None
 with st.sidebar:
     st.header("🔍 Sporcu Seçimi")
     if not db.empty:
-        # HATA ÇÖZÜMÜ: Benzersiz bir key ekledik
         isimler = (db['Ad'].astype(str) + " " + db['Soyad'].astype(str)).tolist()
         arama = st.selectbox("Kayıtlı Öğrenciler", ["-- Yeni Kayıt --"] + isimler, key="sidebar_sporcu_secim")
         if arama != "-- Yeni Kayıt --":
@@ -158,7 +201,7 @@ with st.form("ana_veri_formu"):
         veri_kaydet_ve_merge(pd.DataFrame([packet]))
         st.success("Kaydedildi!"); st.rerun()
 
-# --- 5. RAPORLAMA ---
+# --- 5. ANALİZ VE RAPORLAMA ---
 if secilen_profil is not None:
     st.divider()
     f_db = veri_oku()
@@ -170,8 +213,12 @@ if secilen_profil is not None:
         if skor > 0 and not seri.empty:
             ort = seri.mean(); std = seri.std() if len(seri)>1 else 0
             en_iyi, en_kotu = (seri.min(), seri.max()) if mod == "min" else (seri.max(), seri.min())
-            analiz_datalari.append({"Test": t_ad, "Skor": skor, "Grup Ort.": round(ort,3), "Z-Skor": round((skor-ort)/std if std>0 else 0, 2), "En İyi": en_iyi, "En Kötü": en_kotu})
+            analiz_datalari.append({
+                "Test": t_ad, "Skor": skor, "Grup Ort.": round(ort,3), 
+                "Z-Skor": round((skor-ort)/std if std>0 else 0, 2), 
+                "En İyi": en_iyi, "En Kötü": en_kotu
+            })
 
     if analiz_datalari:
         st.table(pd.DataFrame(analiz_datalari))
-        st.download_button("📄 PDF Raporu İndir", profesyonel_pdf_uret(secilen_profil, analiz_datalari), f"{ad}_{soyad}_Rapor.pdf", key="pdf_download_btn")
+        st.download_button("📄 Yorumlu PDF Raporu İndir", profesyonel_pdf_uret(secilen_profil, analiz_datalari), f"{ad}_{soyad}_Analiz.pdf", key="pdf_download_btn")
