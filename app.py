@@ -15,9 +15,9 @@ from reportlab.lib.utils import ImageReader
 st.set_page_config(page_title="GKD Çoklu İstasyon Analiz", layout="wide")
 
 def font_yukle():
-    if os.path.exists("arial.ttf"):
+    if os.path.exists("Arial.ttf"):
         try:
-            pdfmetrics.registerFont(TTFont('Arial_Tr', 'arial.ttf'))
+            pdfmetrics.registerFont(TTFont('Arial_Tr', 'Arial.ttf'))
             return "Arial_Tr"
         except: return "Helvetica"
     return "Helvetica"
