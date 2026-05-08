@@ -90,14 +90,12 @@ def profesyonel_pdf_uret(secilen, analiz_datalari):
 
     tablo_verisi = [[Paragraph(f"<b>{h}</b>", tablo_icerik_stili) for h in ["Test Adı", "Skor", "Grup Ort.", "Z-Skor", "Durum"]]]
     for r in analiz_datalari:
-        z = r['Z-Skor']
-        durum = "Üstün" if z > 1.5 else "İyi" if z > 0.5 else "Ortalama" if z > -0.5 else "Geliştirilmeli" if z > -1.5 else "Zayıf"
         tablo_verisi.append([
             Paragraph(str(r['Test']), tablo_icerik_stili),
             Paragraph(str(r['Skor']), tablo_icerik_stili),
             Paragraph(str(r['Grup Ort.']), tablo_icerik_stili),
-            Paragraph(str(z), tablo_icerik_stili),
-            Paragraph(durum, tablo_icerik_stili)
+            Paragraph(str(r['Z-Skor']), tablo_icerik_stili),
+            Paragraph(str(r['Durum']), tablo_icerik_stili)
         ])
     
     ozet_tablo = Table(tablo_verisi, colWidths=[130, 60, 70, 60, 70])
@@ -107,7 +105,11 @@ def profesyonel_pdf_uret(secilen, analiz_datalari):
 
     for r in analiz_datalari:
         plt.figure(figsize=(6, 2.5))
-        plt.barh(['En Kötü', 'Ortalama', 'Sporcu', 'En İyi'], [float(r['En Kötü']), float(r['Grup Ort.']), float(r['Skor']), float(r['En İyi'])], color=['#ff8a80', '#cfd8dc', '#1a237e', '#81c784'])
+        plt.barh(['Kritik (-3)', 'Ortalama (0)', 'Sporcu', 'Elit (+3)'], 
+                 [-3.0, 0.0, float(r['Z-Skor']), 3.0], 
+                 color=['#ff8a80', '#cfd8dc', '#1a237e', '#81c784'])
+        plt.xlim(-3.5, 3.5)
+        plt.axvline(0, color='black', linewidth=0.8, linestyle='--')
         plt.tight_layout()
         img_buf = io.BytesIO()
         plt.savefig(img_buf, format='png', dpi=110)
@@ -188,16 +190,34 @@ if secilen_profil is not None:
     f_db = veri_oku()
     akranlar = f_db[f_db['Ceyrek'] == secilen_profil['Ceyrek']]
     analiz_datalari = []
+    
     for t_ad, mod in test_specs.items():
         skor = float(secilen_profil[t_ad])
         seri = akranlar[t_ad].replace(0, np.nan).dropna()
+        
         if skor > 0 and not seri.empty:
             ort = seri.mean()
-            std = seri.std() if len(seri)>1 else 0
-            en_iyi, en_kotu = (seri.min(), seri.max()) if mod == "min" else (seri.max(), seri.min())
-            analiz_datalari.append({"Test": t_ad, "Skor": skor, "Grup Ort.": round(ort,3), "Z-Skor": round((skor-ort)/std if std>0 else 0, 2), "En İyi": en_iyi, "En Kötü": en_kotu})
+            std = seri.std() if len(seri) > 1 else 0
+            
+            # Z-Skor Hesaplama ve Yönsel Düzeltme
+            z_ham = (skor - ort) / std if std > 0 else 0
+            z_final = round(-z_ham if mod == "min" else z_ham, 2)
+            z_final = max(min(z_final, 3.0), -3.0) # +3 / -3 Sınırlandırması
+            
+            # Akademik Durum Belirleme
+            if z_final >= 2.0: durum = "🌟 ELİT (+2/+3)"
+            elif z_final >= 1.0: durum = "✅ ÜST DÜZEY (+1/+2)"
+            elif z_final > -1.0: durum = "⚪ ORTALAMA (-1/+1)"
+            elif z_final > -2.0: durum = "⚠️ GELİŞTİRİLMELI (-1/-2)"
+            else: durum = "🆘 KRİTİK (-2/-3)"
+            
+            analiz_datalari.append({
+                "Test": t_ad, "Skor": skor, "Grup Ort.": round(ort,2), 
+                "Z-Skor": z_final, "Durum": durum
+            })
 
     if analiz_datalari:
+        st.subheader("📊 Akademik Performans Özeti (+3 / -3 Skalası)")
         st.table(pd.DataFrame(analiz_datalari))
         pdf_dosyasi = profesyonel_pdf_uret(secilen_profil, analiz_datalari)
         st.download_button(label="📄 Yorumlu PDF İndir", data=pdf_dosyasi, file_name=f"{ad}_{soyad}_Analiz.pdf", key="pdf_down")
