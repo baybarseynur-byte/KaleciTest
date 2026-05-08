@@ -10,8 +10,8 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib import colors
 
-# --- 1. AYARLAR VE FONT ---
-st.set_page_config(page_title="GKD Akademik Çeyrek Analiz", layout="wide")
+# --- SİSTEM AYARLARI ---
+st.set_page_config(page_title="GKD Akademik Raporlama", layout="wide")
 
 def font_yukle():
     if os.path.exists("arial.ttf"):
@@ -22,17 +22,18 @@ def font_yukle():
     return "Helvetica"
 
 FONT = font_yukle()
-DB_FILE = "akademik_veritabani.csv"
+DB_FILE = "akademik_veri_havuzu.csv"
 
-# --- 2. ÇEYREK (QUARTER) HESAPLAMA FONKSİYONU ---
-def get_quarter(date):
+# --- AKADEMİK ÇEYREK HESAPLAMA ---
+def get_quarter_label(date):
     month = date.month
-    if 1 <= month <= 3: return "Q1"
-    elif 4 <= month <= 6: return "Q2"
-    elif 7 <= month <= 9: return "Q3"
-    else: return "Q4"
+    if 1 <= month <= 3: q = "Q1"
+    elif 4 <= month <= 6: q = "Q2"
+    elif 7 <= month <= 9: q = "Q3"
+    else: q = "Q4"
+    return f"{date.year}_{q}"
 
-# --- 3. VERİ YÖNETİMİ ---
+# --- VERİ TABANI İŞLEMLERİ ---
 def veri_kaydet(df):
     if not os.path.isfile(DB_FILE):
         df.to_csv(DB_FILE, index=False, encoding='utf-16')
@@ -44,119 +45,112 @@ def veri_oku():
         return pd.read_csv(DB_FILE, encoding='utf-16')
     return pd.DataFrame()
 
-# --- 4. ARAYÜZ ---
-st.title("🔬 GKD Akademik Performans & Çeyrek Dilim Analizi")
+# --- ARAYÜZ ---
+st.title("🏃 GKD Akademik Analiz & Araştırma Portalı")
 
 with st.sidebar:
-    st.header("📂 Araştırma Veri Havuzu")
-    db_current = veri_oku()
-    st.write(f"Sistemdeki Toplam Denek: {len(db_current)}")
-    if not db_current.empty:
-        st.download_button("Toplu Veriyi İndir (Excel/SPSS Uyumlu)", 
-                           db_current.to_csv(index=False).encode('utf-16'), 
-                           "gkd_akademik_veritabani.csv", "text/csv")
+    st.header("🔬 Araştırma Veri Yönetimi")
+    db = veri_oku()
+    if not db.empty:
+        st.write(f"Toplam Kayıt: {len(db)}")
+        st.download_button("Tüm Veritabanını İndir (SPSS/Excel)", 
+                           db.to_csv(index=False).encode('utf-16'), 
+                           "gkd_toplu_veri.csv", "text/csv")
 
-with st.form("akademik_form"):
-    st.subheader("👤 Katılımcı Kimlik ve Gelişim Bilgileri")
+with st.form("ana_form"):
+    st.subheader("👤 Katılımcı Bilgileri")
     c1, c2, c3 = st.columns(3)
     with c1:
         ad, soyad = st.text_input("Ad"), st.text_input("Soyad")
-        dogum_tarihi = st.date_input("Doğum Tarihi")
+        dogum = st.date_input("Doğum Tarihi")
     with c2:
-        boy, kilo = st.number_input("Boy (cm)", format="%.1f"), st.number_input("Kilo (kg)", format="%.2f")
+        boy, kilo = st.number_input("Boy (cm)"), st.number_input("Kilo (kg)")
     with c3:
         ayak, el = st.selectbox("Ayak", ["Sağ", "Sol"]), st.selectbox("El", ["Sağ", "Sol"])
-        ant_baslama = st.date_input("Antrenman Başlama Tarihi")
+        baslama = st.date_input("Antrenman Başlama")
 
     st.divider()
-    st.subheader("⏱️ Test Ölçümleri (2 Deneme)")
-    
-    test_specs = {
+    st.subheader("⏱️ Test Sonuçları (2 Deneme)")
+    testler = {
         "5m Sprint (sn)": "min", "10m Sprint (sn)": "min", "20m Sprint (sn)": "min",
         "Dikey Sıçrama (cm)": "max", "SKT Sağ (sn)": "min", "SKT Sol (sn)": "min",
         "LSKT Sağ (sn)": "min", "LSKT Sol (sn)": "min"
     }
-
-    test_data = {}
+    
+    input_data = {}
     cols = st.columns(2)
-    for i, (t_ad, mod) in enumerate(test_specs.items()):
+    for i, (t_ad, mod) in enumerate(testler.items()):
         with cols[i % 2]:
-            st.markdown(f"**{t_ad}**")
-            d1 = st.number_input("1. Deneme", key=f"{t_ad}_d1", format="%.3f")
-            d2 = st.number_input("2. Deneme", key=f"{t_ad}_d2", format="%.3f")
+            st.write(f"**{t_ad}**")
+            d1 = st.number_input("1. Deneme", key=f"{t_ad}1", format="%.3f")
+            d2 = st.number_input("2. Deneme", key=f"{t_ad}2", format="%.3f")
             best = (min(d1, d2) if d1>0 and d2>0 else max(d1, d2)) if mod == "min" else max(d1, d2)
-            test_data[t_ad] = {"D1": d1, "D2": d2, "Best": best}
+            input_data[t_ad] = {"D1": d1, "D2": d2, "Best": best}
 
-    submit = st.form_submit_button("VERİYİ ÇEYREK DİLİMİNE GÖRE ANALİZ ET VE KAYDET", use_container_width=True)
+    submit = st.form_submit_button("ANALİZ ET VE ARŞİVE EKLE")
 
 if submit:
-    # Çeyrek Ataması
-    q_label = f"{dogum_tarihi.year}_{get_quarter(dogum_tarihi)}"
+    ceyrek = get_quarter_label(dogum)
     
-    # Veri Hazırlama
-    entry = {
-        "Ad": ad, "Soyad": soyad, "Dogum_Tarihi": dogum_tarihi, "Boy": boy, "Kilo": kilo,
-        "Ayak": ayak, "El": el, "Ant_Baslama": ant_baslama, "Grup_Ceyrek": q_label,
-        "Kayit_Zamani": datetime.now()
-    }
-    for t, v in test_data.items():
-        entry[f"{t}_D1"] = v["D1"]; entry[f"{t}_D2"] = v["D2"]; entry[t] = v["Best"]
+    # 1. Veritabanına Ekle (Araştırma için tüm denemeleri saklar)
+    new_entry = {"Tarih": datetime.now(), "Ad": ad, "Soyad": soyad, "Ceyrek": ceyrek}
+    for t, v in input_data.items():
+        new_entry[f"{t}_D1"] = v["D1"]; new_entry[f"{t}_D2"] = v["D2"]; new_entry[t] = v["Best"]
     
-    veri_kaydet(pd.DataFrame([entry]))
+    veri_kaydet(pd.DataFrame([new_entry]))
     
-    # Akran Analizi (Sadece aynı çeyrektekilerle kıyasla)
-    full_db = veri_oku()
-    akran_db = full_db[full_db['Grup_Ceyrek'] == q_label]
+    # 2. İstatistikleri Hesapla (Sadece aynı çeyrekteki akranlarla)
+    current_db = veri_oku()
+    akranlar = current_db[current_db['Ceyrek'] == ceyrek]
     
-    analiz_listesi = []
-    for t_ad in test_specs.keys():
-        seri = akran_db[t_ad]
-        ort, std = seri.mean(), (seri.std() if len(seri) > 1 else 0)
-        mak, min_v = seri.max(), seri.min()
-        z = (test_data[t_ad]["Best"] - ort) / std if std > 0 else 0
+    analizler = []
+    for t_ad in testler.keys():
+        seri = akranlar[t_ad]
+        ort, std = seri.mean(), seri.std() if len(seri)>1 else 0
+        mak, mini = seri.max(), seri.min()
+        skor = input_data[t_ad]["Best"]
+        z = (skor - ort) / std if std > 0 else 0
         
-        analiz_listesi.append({
-            "Test": t_ad, "Skor": test_data[t_ad]["Best"], "Akran Ort.": round(ort,3),
-            "Std.Sapma": round(std,3), "Max": mak, "Min": min_v, "Z-Skor": round(z,2)
+        analizler.append({
+            "Test": t_ad, "Skor": skor, "Ort": round(ort,3), 
+            "Std": round(std,3), "Max": mak, "Min": mini, "Z": round(z,2)
         })
 
-    st.info(f"📍 Katılımcı **{q_label}** çeyrek dilimine atanmıştır. İstatistikler bu gruptaki akranlarına göredir.")
-    st.table(pd.DataFrame(analiz_listesi))
+    st.success(f"Kayıt Tamamlandı. Katılımcı Grubu: {ceyrek}")
+    st.table(pd.DataFrame(analizler))
 
-    # --- PDF RAPORLAMA (Her Test Ayrı Bölüm) ---
-    def generate_pdf():
-        buffer = io.BytesIO()
-        c = canvas.Canvas(buffer, pagesize=A4)
+    # 3. PDF RAPOR (Her Test Ayrı Görselleştirme)
+    def pdf_olustur():
+        buf = io.BytesIO()
+        c = canvas.Canvas(buf, pagesize=A4)
         w, h = A4
         
-        c.setFont(FONT, 18); c.drawCentredString(w/2, h-40, "AKADEMİK PERFORMANS ANALİZ RAPORU")
-        c.setFont(FONT, 10); c.drawString(50, h-70, f"Katılımcı: {ad} {soyad} | Dilim: {q_label} | Tarih: {datetime.now().strftime('%d.%m.%Y')}")
-        c.line(50, h-75, 550, h-75)
-
-        y = h - 100
-        for stat in analiz_listesi:
-            if y < 300: c.showPage(); y = h - 50
+        c.setFont(FONT, 16); c.drawCentredString(w/2, h-50, "BİREYSEL AKADEMİK PERFORMANS RAPORU")
+        c.setFont(FONT, 10); c.drawString(50, h-80, f"Sporcu: {ad} {soyad} | Dilim: {ceyrek}")
+        c.line(50, h-85, 550, h-85)
+        
+        y = h - 110
+        for item in analizler:
+            if y < 280: c.showPage(); y = h - 50
             
-            c.setFont(FONT + "-Bold" if "Arial" in FONT else "Helvetica-Bold", 12)
-            c.drawString(50, y, f"TEST: {stat['Test']}")
-            y -= 15
-            c.setFont(FONT, 9)
-            stat_txt = f"Skor: {stat['Skor']} | Akran Ort: {stat['Akran Ort.']} | Std: {stat['Std.Sapma']} | Maks: {stat['Max']} | Min: {stat['Min']} | Z: {stat['Z-Skor']}"
-            c.drawString(60, y, stat_txt)
+            c.setFont(FONT, 12); c.drawString(50, y, f"TEST: {item['Test']}")
+            y -= 15; c.setFont(FONT, 9)
+            txt = f"Skor: {item['Skor']} | Ort: {item['Ort']} | Max: {item['Max']} | Min: {item['Min']} | Z: {item['Z']}"
+            c.drawString(60, y, txt)
             
-            # Grafik
+            # Grafik Çizimi
             plt.figure(figsize=(5, 2.5))
-            plt.barh(['En Kötü', 'Akran Ort.', 'Katılımcı', 'En İyi'], 
-                     [stat['Min'], stat['Akran Ort.'], stat['Skor'], stat['Max']], 
+            plt.barh(['En Kötü', 'Akran Ort.', 'Sporcu', 'En İyi'], 
+                     [item['Min'], item['Ort'], item['Skor'], item['Max']], 
                      color=['#ff8a80', '#cfd8dc', '#1a237e', '#81c784'])
             plt.tight_layout()
-            img_buf = io.BytesIO(); plt.savefig(img_buf, format='png', dpi=100); plt.close()
+            img_b = io.BytesIO(); plt.savefig(img_b, format='png', dpi=100); plt.close()
             
             y -= 130
-            c.drawImage(io.BytesIO(img_buf.getvalue()), 60, y, width=350, preserveAspectRatio=True)
-            y -= 30; c.line(50, y, 500, y); y -= 20
+            c.drawImage(io.BytesIO(img_b.getvalue()), 60, y, width=350, preserveAspectRatio=True)
+            y -= 40; c.line(50, y, 500, y); y -= 20
+            
+        c.save(); buf.seek(0)
+        return buf
 
-        c.save(); buffer.seek(0)
-        return buffer
-
-    st.download_button("📄 Detaylı Akran Raporu İndir (PDF)", generate_pdf(), f"{ad}_{soyad}_Ceyrek_Raporu.pdf")
+    st.download_button("📄 Detaylı Raporu İndir (PDF)", pdf_olustur(), f"{ad}_{soyad}_Rapor.pdf")
