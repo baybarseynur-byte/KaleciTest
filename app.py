@@ -61,13 +61,12 @@ def veri_kaydet_ve_merge(yeni_df):
         yeni_df['Son_Guncelleme'] = datetime.now().strftime("%d.%m.%Y %H:%M")
         pd.concat([mevcut, yeni_df], ignore_index=True).to_csv(DB_FILE, index=False, encoding='utf-16')
 
-# --- 3. PDF ÜRETME (OTOMATİK YORUMLAMA ENTEGRELİ) ---
+# --- 3. PDF ÜRETME (YORUMLAMA ENTEGRELİ) ---
 def profesyonel_pdf_uret(secilen, analiz_datalari):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=50, leftMargin=50, topMargin=50, bottomMargin=50)
     styles = getSampleStyleSheet()
     
-    # Türkçe Font Stilleri
     baslik_stili = ParagraphStyle('Baslik', parent=styles['Heading1'], fontName=FONT, fontSize=16, alignment=1, spaceAfter=20)
     alt_baslik_stili = ParagraphStyle('AltBaslik', parent=styles['Normal'], fontName=FONT, fontSize=11, leading=14)
     tablo_icerik_stili = ParagraphStyle('TabloIcerik', parent=styles['Normal'], fontName=FONT, fontSize=9, alignment=1)
@@ -77,7 +76,6 @@ def profesyonel_pdf_uret(secilen, analiz_datalari):
     akis = []
     akis.append(Paragraph("BİREYSEL PERFORMANS ANALİZ RAPORU", baslik_stili))
     
-    # Sporcu Bilgi Tablosu
     info_data = [
         [Paragraph(f"<b>Ad Soyad:</b> {secilen['Ad']} {secilen['Soyad']}", alt_baslik_stili), 
          Paragraph(f"<b>Grup/Çeyrek:</b> {secilen['Ceyrek']}", alt_baslik_stili)],
@@ -89,7 +87,6 @@ def profesyonel_pdf_uret(secilen, analiz_datalari):
     akis.append(info_table)
     akis.append(Spacer(1, 10))
 
-    # Özet İstatistik Tablosu ve Z-Skor Durum Analizi
     tablo_verisi = [[Paragraph(f"<b>{h}</b>", tablo_icerik_stili) for h in ["Test Adı", "Skor", "Grup Ort.", "Z-Skor", "Durum"]]]
     
     for r in analiz_datalari:
@@ -113,12 +110,11 @@ def profesyonel_pdf_uret(secilen, analiz_datalari):
     akis.append(ozet_tablo)
     akis.append(Spacer(1, 20))
 
-    # Grafikler ve Sözel Yorumlar
     for r in analiz_datalari:
         z = r['Z-Skor']
-        if z > 1.0: y_metni = "Bu testte grup ortalamasının belirgin şekilde üzerindesin. Mevcut formunu korumalısın."
-        elif z < -1.0: y_metni = "Bu parametrede grup ortalamasının altındasın. Gelişim için özel odaklanma gereklidir."
-        else: y_metni = "Grup düzeyiyle paralel (ortalama) bir performans sergilemektesin."
+        y_metni = "Grup düzeyiyle paralel performans."
+        if z > 1.0: y_metni = "Grup ortalamasının belirgin şekilde üzerindesin."
+        elif z < -1.0: y_metni = "Gelişim için özel odaklanma gereklidir."
 
         test_paketi = [
             Paragraph(f"• {r['Test']} Analizi (Z-Skor: {z})", test_baslik_stili),
@@ -132,23 +128,9 @@ def profesyonel_pdf_uret(secilen, analiz_datalari):
                  color=['#ff8a80', '#cfd8dc', '#1a237e', '#81c784'])
         plt.tight_layout()
         img_buf = io.BytesIO(); plt.savefig(img_buf, format='png', dpi=110); plt.close(); img_buf.seek(0)
-        
         test_paketi.append(Image(img_buf, width=380, height=170))
         test_paketi.append(Spacer(1, 15))
         akis.append(KeepTogether(test_paketi))
-
-    # Genel Değerlendirme Notu
-    avg_z = np.mean([r['Z-Skor'] for r in analiz_datalari])
-    akis.append(Spacer(1, 10))
-    akis.append(Paragraph("<b>GENEL DEĞERLENDİRME</b>", test_baslik_stili))
-    if avg_z > 0.5:
-        genel_not = "Genel atletik profiliniz akran grubunuzun üzerindedir. Gelişimi sürdürünüz."
-    elif avg_z < -0.5:
-        genel_not = "Genel performansınız grup ortalamasının altındadır. Temel motorik özelliklere yönelik çalışmalar artırılmalıdır."
-    else:
-        genel_not = "Grup standartlarında bir gelişim göstermektesiniz."
-    
-    akis.append(Paragraph(genel_not, alt_baslik_stili))
 
     doc.build(akis); buf.seek(0)
     return buf
@@ -164,6 +146,34 @@ with st.sidebar:
         arama = st.selectbox("Kayıtlı Öğrenciler", ["-- Yeni Kayıt --"] + isimler, key="sidebar_sporcu_secim")
         if arama != "-- Yeni Kayıt --":
             secilen_profil = db.iloc[isimler.index(arama)]
+    
+    # --- ARAŞTIRMACI ÖZELLİKLERİ ---
+    st.divider()
+    st.subheader("📊 Araştırmacı Menüsü")
+    if not db.empty:
+        # Veriyi anonimleştirme (İsimleri kaldırıp ID atama)
+        research_db = db.copy()
+        research_db['Sporcu_ID'] = research_db.groupby(['Ad', 'Soyad']).ngroup() + 1000
+        # Kimlik bilgilerini ve teknik sütunları araştırmacı dosyasından çıkarıyoruz
+        cols_to_drop = ['Ad', 'Soyad', 'Son_Guncelleme']
+        research_db = research_db.drop(columns=[c for c in cols_to_drop if c in research_db.columns])
+        # ID'yi başa al
+        cols = ['Sporcu_ID'] + [c for c in research_db.columns if c != 'Sporcu_ID']
+        research_db = research_db[cols]
+
+        towrite = io.BytesIO()
+        # Not: Excel için openpyxl kütüphanesi gerekir (pip install openpyxl)
+        try:
+            research_db.to_excel(towrite, index=False, engine='openpyxl')
+            st.download_button(
+                label="📈 Araştırma Veri Setini İndir (Anonim)",
+                data=towrite.getvalue(),
+                file_name=f"anonim_performans_veriseti_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                help="Sporcu isimlerini gizleyerek ID üzerinden Excel çıktısı verir."
+            )
+        except Exception as e:
+            st.error("Excel çıktısı için 'openpyxl' kütüphanesi yüklü olmalıdır.")
 
 with st.form("ana_veri_formu"):
     st.subheader("👤 Sporcu Bilgileri")
@@ -213,11 +223,7 @@ if secilen_profil is not None:
         if skor > 0 and not seri.empty:
             ort = seri.mean(); std = seri.std() if len(seri)>1 else 0
             en_iyi, en_kotu = (seri.min(), seri.max()) if mod == "min" else (seri.max(), seri.min())
-            analiz_datalari.append({
-                "Test": t_ad, "Skor": skor, "Grup Ort.": round(ort,3), 
-                "Z-Skor": round((skor-ort)/std if std>0 else 0, 2), 
-                "En İyi": en_iyi, "En Kötü": en_kotu
-            })
+            analiz_datalari.append({"Test": t_ad, "Skor": skor, "Grup Ort.": round(ort,3), "Z-Skor": round((skor-ort)/std if std>0 else 0, 2), "En İyi": en_iyi, "En Kötü": en_kotu})
 
     if analiz_datalari:
         st.table(pd.DataFrame(analiz_datalari))
