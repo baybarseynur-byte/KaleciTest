@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import os, io, platform
+import os, io
 from datetime import datetime
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
@@ -10,63 +10,143 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib import colors
 
-# --- 1. AYARLAR VE FONT MOTORU ---
-st.set_page_config(page_title="GKD Performans Analiz", layout="wide")
+# --- 1. SİSTEM VE FONT AYARLARI ---
+st.set_page_config(page_title="GKD Araştırma ve Analiz Portalı", layout="wide")
 
 def font_yukle():
-    """PDF'de Türkçe karakter hatasını önlemek için fontu yükler."""
-    font_path = "arial.ttf" # Uygulama klasöründe bulunmalıdır
-    if os.path.exists(font_path):
+    if os.path.exists("arial.ttf"):
         try:
-            pdfmetrics.registerFont(TTFont('Arial_Tr', font_path))
-            pdfmetrics.registerFont(TTFont('Arial_Tr_Bold', font_path)) # Kalın font simülasyonu
+            pdfmetrics.registerFont(TTFont('Arial_Tr', 'arial.ttf'))
             return "Arial_Tr"
-        except:
-            return "Helvetica"
+        except: return "Helvetica"
     return "Helvetica"
 
-FONT_NAME = font_yukle()
+FONT = font_yukle()
 
-# --- 2. VERİ YÖNETİMİ ---
-# Not: Gerçek bir bulut deneyimi için Google Sheets Connection kullanılabilir.
-# Bu versiyon, Streamlit oturumu (session) boyunca verileri hafızada tutar.
+# --- 2. MERKEZİ VERİ YÖNETİMİ (ARAŞTIRMA İÇİN) ---
 if 'db' not in st.session_state:
     st.session_state.db = pd.DataFrame()
 
-# --- 3. ARAYÜZ TASARIMI ---
-st.title("🏃 GKD Bilimsel Performans Analiz Portalı")
-st.markdown("Öğrenci verilerini girin, grup ortalamalarıyla kıyaslayın ve bilimsel rapor oluşturun.")
+# --- 3. ARAYÜZ ---
+st.title("🔬 GKD Bilimsel Araştırma ve Performans Sistemi")
+st.markdown("Veriler araştırma amaçlı toplu kullanım ve bireysel detaylı raporlama için işlenir.")
 
-with st.sidebar:
-    st.header("Sistem Bilgisi")
-    st.info("Bu uygulama çoklu bilgisayar kullanımı için Streamlit Cloud üzerinde yayınlanmaya uygundur.")
-    if st.button("Tüm Veri Tabanını Sıfırla"):
-        st.session_state.db = pd.DataFrame()
-        st.rerun()
-
-# --- 4. VERİ GİRİŞ FORMU ---
-with st.form("ana_form"):
-    st.subheader("📋 1. Öğrenci Tanımlayıcı Bilgileri")
+with st.form("gelismis_form"):
+    st.subheader("👤 Öğrenci Kimlik Bilgileri")
     c1, c2, c3 = st.columns(3)
     with c1:
-        ad = st.text_input("Ad")
-        soyad = st.text_input("Soyad")
+        ad, soyad = st.text_input("Ad"), st.text_input("Soyad")
         dogum = st.date_input("Doğum Tarihi", min_value=datetime(1990, 1, 1))
     with c2:
-        kilo = st.number_input("Kilo (kg)", format="%.2f")
-        boy = st.number_input("Boy (cm)", format="%.1f")
-        antrenman_baslama = st.date_input("Antrenmana Başlama Tarihi")
+        kilo, boy = st.number_input("Kilo (kg)"), st.number_input("Boy (cm)")
+        ant_baslama = st.date_input("Antrenman Başlama Tarihi")
     with c3:
-        ayak = st.selectbox("Tercih Edilen Ayak", ["Sağ", "Sol"])
-        el = st.selectbox("Tercih Edilen El", ["Sağ", "Sol"])
+        ayak = st.selectbox("Ayak", ["Sağ", "Sol"])
+        el = st.selectbox("El", ["Sağ", "Sol"])
 
     st.divider()
-    st.subheader("⏱️ 2. Performans Testleri (2 Deneme)")
+    st.subheader("📊 Test Verileri (Denemeler)")
     
-    # Test konfigürasyonu: (İsim, Değerlendirme Tipi)
-    test_konfig = {
-        "5m Sprint (sn)": "min",
-        "10m Sprint (sn)": "min",
+    test_yapisi = {
+        "5m Sprint (sn)": "min", "10m Sprint (sn)": "min", "20m Sprint (sn)": "min",
+        "Dikey Sıçrama (cm)": "max", "SKT Sağ (sn)": "min", "SKT Sol (sn)": "min",
+        "LSKT Sağ (sn)": "min", "LSKT Sol (sn)": "min"
+    }
+
+    raw_data = {}
+    cols = st.columns(2)
+    for i, (t_ad, mod) in enumerate(test_yapisi.items()):
+        with cols[i % 2]:
+            st.write(f"**{t_ad}**")
+            d1 = st.number_input("1. Deneme", key=f"{t_ad}_d1", format="%.3f")
+            d2 = st.number_input("2. Deneme", key=f"{t_ad}_d2", format="%.3f")
+            best = (min(d1, d2) if d1>0 and d2>0 else max(d1, d2)) if mod == "min" else max(d1, d2)
+            raw_data[t_ad] = {"d1": d1, "d2": d2, "best": best}
+
+    submit = st.form_submit_button("ANALİZ ET VE VERİ TABANINA İŞLE")
+
+if submit:
+    # Veri Kaydı (Araştırma Amaçlı Tüm Detaylar)
+    yeni_kayit = {
+        "Ad": ad, "Soyad": soyad, "Boy": boy, "Kilo": kilo, "Ayak": ayak, "El": el,
+        "Kayit": datetime.now().strftime("%Y-%m-%d %H:%M")
+    }
+    for t, v in raw_data.items():
+        yeni_kayit[f"{t}_D1"] = v['d1']
+        yeni_kayit[f"{t}_D2"] = v['d2']
+        yeni_kayit[t] = v['best']
+    
+    st.session_state.db = pd.concat([st.session_state.db, pd.DataFrame([yeni_kayit])], ignore_index=True)
+    
+    # İstatistiksel Hesaplamalar
+    istatistikler = []
+    for t_ad in test_yapisi.keys():
+        seri = st.session_state.db[t_ad]
+        ort, std = seri.mean(), (seri.std() if len(seri)>1 else 0)
+        en_iyi = seri.min() if test_yapisi[t_ad] == "min" else seri.max()
+        en_kotu = seri.max() if test_yapisi[t_ad] == "min" else seri.min()
+        z = (raw_data[t_ad]['best'] - ort) / std if std > 0 else 0
+        
+        istatistikler.append({
+            "Test": t_ad, "Skor": raw_data[t_ad]['best'], "Ort": round(ort,3), 
+            "Std": round(std,3), "Z": round(z,2), "Grup En İyi": en_iyi, "Grup En Kötü": en_kotu
+        })
+
+    st.success("Veri başarıyla işlendi ve grup istatistikleri güncellendi.")
+    st.dataframe(pd.DataFrame(istatistikler))
+
+    # --- PDF OLUŞTURMA (Her Test Ayrı Grafik ve Geniş Tablo) ---
+    def generate_detailed_pdf():
+        buffer = io.BytesIO()
+        c = canvas.Canvas(buffer, pagesize=A4)
+        w, h = A4
+        
+        # Kapak ve Bilgiler
+        c.setFont(FONT, 16); c.drawString(50, h-50, "BİREYSEL PERFORMANS ANALİZ RAPORU")
+        c.setFont(FONT, 10); c.drawString(50, h-80, f"Sporcu: {ad} {soyad} | Boy: {boy} | Kilo: {kilo} | Tarih: {datetime.now().strftime('%d.%m.%Y')}")
+        c.line(50, h-90, 545, h-90)
+
+        curr_y = h - 120
+        for i, stat in enumerate(istatistikler):
+            if curr_y < 250: # Yeni sayfa kontrolü
+                c.showPage(); curr_y = h - 50
+            
+            # Test Başlığı ve Verileri
+            c.setFont(FONT + "-Bold" if "Helvetica" not in FONT else "Helvetica-Bold", 11)
+            c.drawString(50, curr_y, f"TEST: {stat['Test']}")
+            c.setFont(FONT, 9)
+            curr_y -= 15
+            info_str = f"Skor: {stat['Skor']} | Ort: {stat['Ort']} | Z-Skor: {stat['Z']} | Grup En İyi: {stat['Grup En İyi']} | Grup En Kötü: {stat['Grup En Kötü']}"
+            c.drawString(60, curr_y, info_str)
+            
+            # Her Test İçin Ayrı Grafik
+            plt.figure(figsize=(4, 2))
+            plt.barh(['Grup En Kötü', 'Grup Ort.', 'Sporcu', 'Grup En İyi'], 
+                     [stat['Grup En Kötü'], stat['Ort'], stat['Skor'], stat['Grup En İyi']], 
+                     color=['red', 'gray', 'blue', 'green'])
+            plt.tight_layout()
+            img_buf = io.BytesIO()
+            plt.savefig(img_buf, format='png', dpi=100)
+            plt.close()
+            
+            curr_y -= 110
+            c.drawImage(io.BytesIO(img_buf.getvalue()), 60, curr_y, width=300, preserveAspectRatio=True)
+            curr_y -= 40
+            c.line(50, curr_y, 500, curr_y)
+            curr_y -= 30
+
+        c.save()
+        buffer.seek(0)
+        return buffer
+
+    st.download_button("📄 Detaylı Raporu İndir (Grafik + Geniş Tablo)", generate_detailed_pdf(), f"{ad}_{soyad}_Detayli.pdf")
+
+# --- ARAŞTIRMA İÇİN TOPLU VERİ İNDİRME ---
+st.sidebar.divider()
+st.sidebar.subheader("🔬 Araştırmacı Paneli")
+if not st.session_state.db.empty:
+    csv = st.session_state.db.to_csv(index=False).encode('utf-16')
+    st.sidebar.download_button("Excel/SPSS İçin Toplu Veriyi İndir", csv, "arastirma_verisi.csv", "text/csv")        "10m Sprint (sn)": "min",
         "20m Sprint (sn)": "min",
         "Dikey Sıçrama (cm)": "max",
         "SKT Sağ (sn)": "min",
