@@ -60,6 +60,8 @@ def veri_kaydet_ve_merge(yeni_df):
                 idx = mevcut.index[mask][0]
                 for col in yeni_df.columns:
                     if pd.notnull(row[col]) and row[col] != "":
+                        if col in mevcut.columns and mevcut[col].dtype != yeni_df[col].dtype:
+                            mevcut[col] = mevcut[col].astype(object)
                         mevcut.loc[idx, col] = row[col]
                 mevcut.loc[idx, 'Son_Guncelleme'] = datetime.now().strftime("%d.%m.%Y %H:%M")
             else:
@@ -80,7 +82,7 @@ def profesyonel_pdf_uret(secilen, analiz_datalari):
     akis = [Paragraph("BİREYSEL PERFORMANS ANALİZ RAPORU", b_stili)]
     info = [
         [Paragraph(f"<b>Ad Soyad:</b> {secilen.get('Ad','')} {secilen.get('Soyad','')}", a_stili), Paragraph(f"<b>Grup:</b> {secilen.get('Ceyrek','')}", a_stili)],
-        [Paragraph(f"<b>Doğum:</b> {secilen.get('Dogum_Tarihi','')}", a_stili), Paragraph(f"<b>Başlama:</b> {secilen.get('Baslama_Tarihi','')}", a_stili)],
+        [Paragraph(f"<b>Doğum:</b> {secilen.get('Dogum_Tarihi','')}", a_stili), Paragraph(f"<b>Başlama Tarihi:</b> {secilen.get('Baslama_Tarihi','')}", a_stili)],
         [Paragraph(f"<b>Boy/Kilo:</b> {secilen.get('Boy','')}cm / {secilen.get('Kilo','')}kg", a_stili), ""]
     ]
     akis.append(Table(info, colWidths=[250, 250]))
@@ -121,15 +123,11 @@ with st.sidebar:
     st.subheader("📈 Araştırmacı Menüsü")
     if not db.empty:
         try:
-            # İsmi gizlenmiş anonim veri seti oluşturma
-            r_db = db.copy()
-            if 'Ad' in r_db.columns and 'Soyad' in r_db.columns:
-                r_db['Sporcu_ID'] = r_db.groupby(['Ad', 'Soyad']).ngroup() + 1000
-                r_db = r_db.drop(columns=['Ad', 'Soyad', 'Son_Guncelleme'], errors='ignore')
-            
+            # ÇIKTIDA AD VE SOYAD ARTIK VERİLİYOR
             towrite = io.BytesIO()
-            r_db.to_excel(towrite, index=False, engine='openpyxl')
-            st.download_button("📊 Tüm Verileri Excel İndir", towrite.getvalue(), f"gkd_arastirma_{datetime.now().strftime('%Y%m%d')}.xlsx")
+            with pd.ExcelWriter(towrite, engine='openpyxl') as writer:
+                db.to_excel(writer, index=False, sheet_name='Performans Verileri')
+            st.download_button("📊 Tüm Verileri Excel İndir", towrite.getvalue(), f"gkd_tam_veriseti_{datetime.now().strftime('%Y%m%d')}.xlsx")
         except Exception as e: st.error(f"Excel hatası: {e}")
 
     st.divider()
@@ -146,13 +144,16 @@ with st.form("ana_veri_formu"):
     st.subheader("👤 Sporcu Bilgileri")
     c1, c2, c3 = st.columns(3)
     with c1:
-        ad = st.text_input("Ad", value=str(secilen_profil['Ad']) if secilen_profil is not None else "")
-        soyad = st.text_input("Soyad", value=str(secilen_profil['Soyad']) if secilen_profil is not None else "")
+        ad_val = str(secilen_profil['Ad']) if secilen_profil is not None else ""
+        soyad_val = str(secilen_profil['Soyad']) if secilen_profil is not None else ""
+        ad = st.text_input("Ad", value=ad_val)
+        soyad = st.text_input("Soyad", value=soyad_val)
     with c2:
-        v_dt = datetime.strptime(str(secilen_profil['Dogum_Tarihi']), '%Y-%m-%d') if secilen_profil is not None else datetime(2012,1,1)
+        v_dt_str = str(secilen_profil['Dogum_Tarihi']) if secilen_profil is not None else "2012-01-01"
+        v_dt = datetime.strptime(v_dt_str, '%Y-%m-%d') if v_dt_str != 'nan' else datetime(2012,1,1)
         dogum = st.date_input("Doğum Tarihi", value=v_dt)
-        v_bas_val = str(secilen_profil.get('Baslama_Tarihi', 'nan'))
-        v_bas = datetime.strptime(v_bas_val, '%Y-%m-%d') if v_bas_val != 'nan' else datetime.now()
+        v_bas_str = str(secilen_profil.get('Baslama_Tarihi', 'nan'))
+        v_bas = datetime.strptime(v_bas_str, '%Y-%m-%d') if v_bas_str != 'nan' else datetime.now()
         baslama = st.date_input("Antrenmana Başlama Tarihi", value=v_bas)
     with c3:
         boy = st.number_input("Boy (cm)", value=float(secilen_profil['Boy']) if secilen_profil is not None else 150.0)
@@ -204,4 +205,4 @@ if secilen_profil is not None:
     if analiz_datalari:
         st.table(pd.DataFrame(analiz_datalari))
         pdf = profesyonel_pdf_uret(secilen_profil, analiz_datalari)
-        st.download_button("📄 PDF İndir", pdf, f"{secilen_profil['Ad']}_{secilen_profil['Soyad']}.pdf")
+        st.download_button("📄 PDF İndir", pdf, f"{ad}_{soyad}.pdf")
