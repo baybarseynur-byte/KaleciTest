@@ -34,14 +34,12 @@ DB_FILE = "gkd_akademik_veritabani.csv"
 def veri_oku():
     if os.path.exists(DB_FILE):
         try:
-            # UTF-16 ve UTF-8 denemesi
             try:
                 df = pd.read_csv(DB_FILE, encoding='utf-16')
             except:
                 df = pd.read_csv(DB_FILE, encoding='utf-8')
-            
             if not df.empty:
-                df.columns = df.columns.str.strip() # Sütun boşluklarını temizle
+                df.columns = df.columns.str.strip()
             return df
         except: return pd.DataFrame()
     return pd.DataFrame()
@@ -50,14 +48,11 @@ def veri_kaydet_yeni_olcum(yeni_df):
     mevcut = veri_oku()
     yeni_df.columns = yeni_df.columns.str.strip()
     
-    if 'Olcum_Tarihi' not in yeni_df.columns:
-        yeni_df['Olcum_Tarihi'] = datetime.now().strftime("%Y-%m-%d")
-    
     if mevcut.empty or 'Ad' not in mevcut.columns:
         mevcut = yeni_df
     else:
         for _, row in yeni_df.iterrows():
-            # Güvenli karşılaştırma
+            # Benzersizlik: Ad + Soyad + Ölçüm Tarihi
             mask = (mevcut['Ad'].astype(str) == str(row['Ad'])) & \
                    (mevcut['Soyad'].astype(str) == str(row['Soyad'])) & \
                    (mevcut['Olcum_Tarihi'].astype(str) == str(row['Olcum_Tarihi']))
@@ -71,7 +66,7 @@ def veri_kaydet_yeni_olcum(yeni_df):
     
     mevcut.to_csv(DB_FILE, index=False, encoding='utf-16')
 
-# --- 3. PDF ÜRETME (Öncekiyle aynı) ---
+# --- 3. PDF ÜRETME ---
 def profesyonel_pdf_uret(secilen, analiz_datalari, tum_gecmis):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
@@ -81,9 +76,11 @@ def profesyonel_pdf_uret(secilen, analiz_datalari, tum_gecmis):
 
     akis = [Paragraph("BİREYSEL GELİŞİM VE PERFORMANS RAPORU", b_stili)]
     
+    # Künye Bilgilerine Başlama Tarihi eklendi
     info = [
         [f"Ad Soyad: {secilen.get('Ad','')} {secilen.get('Soyad','')}", f"Grup: {secilen.get('Ceyrek','')}"],
-        [f"Boy/Kilo: {secilen.get('Boy','')}cm / {secilen.get('Kilo','')}kg", f"Ölçüm Tarihi: {secilen.get('Olcum_Tarihi','')}"]
+        [f"Boy/Kilo: {secilen.get('Boy','')}cm / {secilen.get('Kilo','')}kg", f"Ölçüm Tarihi: {secilen.get('Olcum_Tarihi','')}"],
+        [f"Antrenmana Başlama: {secilen.get('Baslama_Tarihi','')}", ""]
     ]
     t = Table(info, colWidths=[250, 250])
     t.setStyle(TableStyle([('FONTNAME', (0,0), (-1,-1), FONT)]))
@@ -108,9 +105,7 @@ secilen_profil = None
 
 with st.sidebar:
     st.header("🔍 Sporcu Seçimi")
-    
-    # Sütun kontrolü yaparak hata almayı engelliyoruz
-    if not db.empty and 'Ad' in db.columns and 'Soyad' in db.columns:
+    if not db.empty and 'Ad' in db.columns:
         sporcu_listesi = db.groupby(['Ad', 'Soyad']).size().index.tolist()
         isimler = [f"{s[0]} {s[1]}" for s in sporcu_listesi]
         arama = st.selectbox("Kayıtlı Sporcu Düzenle", ["-- Yeni Kayıt --"] + isimler)
@@ -121,34 +116,30 @@ with st.sidebar:
             if 'Olcum_Tarihi' in gecmis_veriler.columns:
                 gecmis_veriler = gecmis_veriler.sort_values('Olcum_Tarihi', ascending=False)
             secilen_profil = gecmis_veriler.iloc[0]
-    else:
-        st.info("Henüz kayıtlı sporcu yok.")
 
     st.divider()
-    st.subheader("📊 Araştırmacı Portalı")
     if not db.empty:
-        # Hatalı olan satırı düzelttik: Sütun varsa sırala, yoksa düz ver
-        siralama_sutunlari = [c for c in ['Ad', 'Olcum_Tarihi'] if c in db.columns]
-        output_df = db.sort_values(siralama_sutunlari) if siralama_sutunlari else db
-        
         towrite = io.BytesIO()
-        output_df.to_excel(towrite, index=False, engine='openpyxl')
-        st.download_button("Excel: Tüm Verileri İndir", towrite.getvalue(), "sporcu_veritabani.xlsx")
+        db.to_excel(towrite, index=False, engine='openpyxl')
+        st.download_button("📊 Tüm Veritabanını Excel İndir", towrite.getvalue(), "akademik_veri_seti.xlsx")
 
-# --- 5. VERİ GİRİŞ FORMU (Öncekiyle aynı) ---
+# --- 5. VERİ GİRİŞ FORMU ---
 with st.form("olcum_formu"):
-    st.subheader("📝 Yeni Ölçüm Girişi")
+    st.subheader("📝 Ölçüm Kaydı")
     c1, c2, c3 = st.columns(3)
     with c1:
         ad = st.text_input("Ad", value=str(secilen_profil['Ad']) if secilen_profil is not None else "")
         soyad = st.text_input("Soyad", value=str(secilen_profil['Soyad']) if secilen_profil is not None else "")
     with c2:
         olcum_tarihi = st.date_input("Ölçüm Tarihi", value=datetime.now())
-        v_dt_str = str(secilen_profil['Dogum_Tarihi']) if secilen_profil is not None else "2012-01-01"
-        try: v_dt = datetime.strptime(v_dt_str, '%Y-%m-%d')
-        except: v_dt = datetime(2012, 1, 1)
-        dogum = st.date_input("Doğum Tarihi", value=v_dt)
+        # Başlama Tarihi Girişi
+        v_bas_str = str(secilen_profil.get('Baslama_Tarihi', '2020-01-01')) if secilen_profil is not None else "2020-01-01"
+        try: v_bas = datetime.strptime(v_bas_str, '%Y-%m-%d')
+        except: v_bas = datetime(2020, 1, 1)
+        baslama = st.date_input("Antrenmana Başlama Tarihi", value=v_bas)
     with c3:
+        v_dt_str = str(secilen_profil['Dogum_Tarihi']) if secilen_profil is not None else "2012-01-01"
+        dogum = st.date_input("Doğum Tarihi", value=datetime.strptime(v_dt_str, '%Y-%m-%d'))
         boy = st.number_input("Boy (cm)", value=float(secilen_profil['Boy']) if secilen_profil is not None else 150.0)
         kilo = st.number_input("Kilo (kg)", value=float(secilen_profil['Kilo']) if secilen_profil is not None else 40.0)
 
@@ -165,22 +156,25 @@ with st.form("olcum_formu"):
             best = (min(d1, d2) if d1 > 0 and d2 > 0 else max(d1, d2)) if mod == "min" else max(d1, d2)
             yeni_veriler[t_ad] = {"D1": d1, "D2": d2, "B": best}
 
-    if st.form_submit_button("ÖLÇÜMÜ KAYDET"):
+    if st.form_submit_button("KAYDET VE ANALİZ ET"):
         if ad and soyad:
             q = f"{dogum.year}_Q{(dogum.month-1)//3+1}"
-            p = {"Ad": ad.strip(), "Soyad": soyad.strip(), "Dogum_Tarihi": dogum.strftime('%Y-%m-%d'), 
-                 "Olcum_Tarihi": olcum_tarihi.strftime('%Y-%m-%d'), "Boy": boy, "Kilo": kilo, "Ceyrek": q}
+            p = {"Ad": ad.strip(), "Soyad": soyad.strip(), 
+                 "Dogum_Tarihi": dogum.strftime('%Y-%m-%d'), 
+                 "Olcum_Tarihi": olcum_tarihi.strftime('%Y-%m-%d'), 
+                 "Baslama_Tarihi": baslama.strftime('%Y-%m-%d'),
+                 "Boy": boy, "Kilo": kilo, "Ceyrek": q}
             for t, v in yeni_veriler.items():
                 p[f"{t}_D1"], p[f"{t}_D2"], p[t] = v["D1"], v["D2"], v["B"]
             
             veri_kaydet_yeni_olcum(pd.DataFrame([p]))
-            st.success(f"Kaydedildi!")
+            st.success("Ölçüm başarıyla kaydedildi!")
             st.rerun()
 
-# --- 6. ANALİZ (Öncekiyle aynı) ---
+# --- 6. ANALİZ ---
 if secilen_profil is not None:
     st.divider()
-    st.subheader(f"📊 {secilen_profil['Ad']} {secilen_profil['Soyad']} - Analiz")
+    st.subheader(f"📊 {secilen_profil['Ad']} {secilen_profil['Soyad']} - Performans Analizi")
     akranlar = db[db['Ceyrek'] == secilen_profil['Ceyrek']]
     analiz_datalari = []
     for t_ad, mod in test_specs.items():
@@ -198,4 +192,4 @@ if secilen_profil is not None:
         st.table(pd.DataFrame(analiz_datalari))
         sporcu_gecmis = db[(db['Ad'] == secilen_profil['Ad']) & (db['Soyad'] == secilen_profil['Soyad'])]
         pdf = profesyonel_pdf_uret(secilen_profil, analiz_datalari, sporcu_gecmis)
-        st.download_button("📄 PDF Raporu", pdf, f"Rapor_{secilen_profil['Ad']}.pdf")
+        st.download_button("📄 Gelişim Raporu (PDF)", pdf, f"Rapor_{secilen_profil['Ad']}_{secilen_profil['Olcum_Tarihi']}.pdf")
