@@ -13,25 +13,43 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-# --- 1. SİSTEM AYARLARI ---
+# --- 1. SİSTEM AYARLARI VE FONT YAPILANDIRMASI ---
 st.set_page_config(page_title="GKD Akademik Performans Sistemi", layout="wide")
 
-def font_yukle():
-    """Türkçe karakterler için font yapılandırması."""
-    # Yaygın font yollarını dene
-    font_paths = ["arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
-    for path in font_paths:
-        if os.path.exists(path):
-            try:
-                pdfmetrics.registerFont(TTFont('Global_Font', path))
-                return 'Global_Font'
-            except: continue
-    return 'Helvetica'
+def font_ayarla():
+    """
+    Sunucu ortamında Türkçe karakter desteği için fontu sisteme kaydeder.
+    """
+    # Linux (Streamlit Cloud) üzerinde en yaygın bulunan Türkçe destekli font yolu
+    linux_font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    local_font_name = "arial.ttf" # Eğer yerel dizine arial.ttf koyarsanız bunu kullanır
+    
+    font_name = "Helvetica" # Varsayılan (yedek)
+    
+    try:
+        if os.path.exists(local_font_name):
+            pdfmetrics.registerFont(TTFont('GKD_Font', local_font_name))
+            font_name = 'GKD_Font'
+        elif os.path.exists(linux_font_path):
+            pdfmetrics.registerFont(TTFont('GKD_Font', linux_font_path))
+            font_name = 'GKD_Font'
+        else:
+            # Font bulunamazsa hata vermemesi için standart fontu kullanır
+            font_name = "Helvetica"
+    except Exception as e:
+        st.warning(f"Font yükleme uyarısı: {e}")
+        
+    return font_name
 
-FONT = font_yukle()
+FONT = font_ayarla()
+
+# Matplotlib Grafiklerinde Türkçe Karakter Desteği
+plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['axes.unicode_minus'] = False # Eksi işaretinin düzgün görünmesi için
+
 DB_FILE = "gkd_akademik_veritabani.csv"
 
-# --- 2. VERİ YÖNETİMİ (GÜÇLENDİRİLMİŞ) ---
+# --- 2. VERİ YÖNETİMİ ---
 def veri_oku():
     if os.path.exists(DB_FILE):
         try:
@@ -39,14 +57,10 @@ def veri_oku():
                 df = pd.read_csv(DB_FILE, encoding='utf-16')
             except:
                 df = pd.read_csv(DB_FILE, encoding='utf-8')
-            
             if not df.empty:
                 df.columns = df.columns.str.strip()
-                # KRİTİK: Eğer eski dosyada ID yoksa otomatik ekle
                 if 'ID' not in df.columns:
-                    df['ID'] = [f"ESKI-{uuid.uuid4().hex[:4].upper()}" for _ in range(len(df))]
-                if 'Olcum_Tarihi' not in df.columns:
-                    df['Olcum_Tarihi'] = datetime.now().strftime("%Y-%m-%d")
+                    df['ID'] = [f"ESK-{uuid.uuid4().hex[:4].upper()}" for _ in range(len(df))]
             return df
         except: return pd.DataFrame()
     return pd.DataFrame()
@@ -54,22 +68,18 @@ def veri_oku():
 def veri_kaydet_ve_guncelle(yeni_df):
     mevcut = veri_oku()
     yeni_df.columns = yeni_df.columns.str.strip()
-    
     if mevcut.empty:
         mevcut = yeni_df
     else:
         for _, row in yeni_df.iterrows():
-            # ID ve Ölçüm Tarihi bazlı eşleşme kontrolü
             mask = (mevcut['ID'].astype(str) == str(row['ID'])) & \
                    (mevcut['Olcum_Tarihi'].astype(str) == str(row['Olcum_Tarihi']))
-            
             if mask.any():
                 idx = mevcut.index[mask][0]
                 for col in yeni_df.columns:
                     mevcut.at[idx, col] = row[col]
             else:
                 mevcut = pd.concat([mevcut, pd.DataFrame([row])], ignore_index=True)
-    
     mevcut.to_csv(DB_FILE, index=False, encoding='utf-16')
 
 # --- 3. PDF ÜRETME MOTORU ---
@@ -78,25 +88,25 @@ def profesyonel_pdf_uret(secilen, analiz_datalari, tum_gecmis):
     doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
     styles = getSampleStyleSheet()
     
-    # Türkçe Karakter Destekli Stiller
+    # Türkçe Karakter Destekli Özel Stiller
     title_style = ParagraphStyle('T', fontName=FONT, fontSize=18, alignment=1, spaceAfter=20)
     head_style = ParagraphStyle('H', fontName=FONT, fontSize=12, spaceBefore=10, textColor=colors.navy)
     
     akis = [Paragraph("BİREYSEL PERFORMANS VE GELİŞİM RAPORU", title_style)]
     
-    # Künye
+    # Künye Tablosu
     info_data = [
-        [f"ID: {secilen.get('ID','')}", f"Grup: {secilen.get('Ceyrek','')}"],
+        [f"ID: {secilen.get('ID','')}", f"Grup (Çeyrek): {secilen.get('Ceyrek','')}"],
         [f"Ad Soyad: {secilen.get('Ad','')} {secilen.get('Soyad','')}", f"Ölçüm Tarihi: {secilen.get('Olcum_Tarihi','')}"],
         [f"Boy: {secilen.get('Boy','')} cm", f"Kilo: {secilen.get('Kilo','')} kg"]
     ]
     t_info = Table(info_data, colWidths=[250, 250])
-    t_info.setStyle(TableStyle([('FONTNAME', (0,0), (-1,-1), FONT)]))
+    t_info.setStyle(TableStyle([('FONTNAME', (0,0), (-1,-1), FONT), ('FONTSIZE', (0,0), (-1,-1), 10)]))
     akis.append(t_info)
     akis.append(Spacer(1, 15))
 
-    # Tablo
-    table_data = [["Test Adı", "Skor", "Ort.", "Z-Skor", "Durum"]]
+    # Analiz Tablosu
+    table_data = [["Test Adı", "Skor", "Grup Ort.", "Z-Skor", "Durum"]]
     for r in analiz_datalari:
         table_data.append([r['Test'], r['Skor'], r['Grup Ort.'], r['Z-Skor'], r['Durum']])
     
@@ -104,65 +114,73 @@ def profesyonel_pdf_uret(secilen, analiz_datalari, tum_gecmis):
     t.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
         ('FONTNAME', (0,0), (-1,-1), FONT),
-        ('BACKGROUND', (0,0), (-1,0), colors.whitesmoke)
+        ('BACKGROUND', (0,0), (-1,0), colors.whitesmoke),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER')
     ]))
     akis.append(t)
     
     # Grafiklerin Eklenmesi
     for r in analiz_datalari:
         test_adi = r['Test']
-        plt.figure(figsize=(6, 3))
+        plt.figure(figsize=(6, 2.8))
         gecmis = tum_gecmis.sort_values('Olcum_Tarihi')
         
         if len(gecmis) > 1:
             plt.plot(gecmis['Olcum_Tarihi'], gecmis[test_adi], marker='o', color='blue', lw=2)
-            plt.title(f"{test_adi} Gelişim Trendi", fontsize=10)
+            plt.title(f"{test_adi} - Gelişim Trendi", fontsize=10)
         else:
             z = float(r['Z-Skor'])
-            plt.barh(['Akran', 'Sporcu'], [0, z], color=['grey', 'blue'])
+            plt.barh(['Akran Ort.', 'Sporcu'], [0, z], color=['grey', 'blue'])
             plt.xlim(-3.5, 3.5); plt.axvline(0, color='black')
-            plt.title(f"{test_adi} Kıyaslama", fontsize=10)
+            plt.title(f"{test_adi} - Akran Kıyaslama", fontsize=10)
             
-        plt.grid(True, alpha=0.3); plt.tight_layout()
-        img_buf = io.BytesIO(); plt.savefig(img_buf, format='png'); plt.close()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        
+        img_buf = io.BytesIO()
+        plt.savefig(img_buf, format='png')
+        plt.close()
         akis.append(KeepTogether([Spacer(1,15), Image(img_buf, width=400, height=160)]))
 
-    doc.build(akis); buf.seek(0)
+    doc.build(akis)
+    buf.seek(0)
     return buf
 
-# --- 4. ARAYÜZ ---
+# --- 4. ARAYÜZ (SIDEBAR VE FORM) ---
 db = veri_oku()
 secilen_profil = None
 
 with st.sidebar:
-    st.header("⚙️ Yönetim")
+    st.header("⚙️ Yönetim Paneli")
     if not db.empty and 'ID' in db.columns:
-        # İsim ve ID ile seçim listesi oluştur
         unique_list = db.sort_values('Olcum_Tarihi', ascending=False).drop_duplicates('ID')
         options = ["-- Yeni Kayıt --"] + [f"{r['Ad']} {r['Soyad']} ({r['ID']})" for _, r in unique_list.iterrows()]
-        secim = st.selectbox("Sporcu Seç", options)
-        
+        secim = st.selectbox("Sporcu Düzenle", options)
         if secim != "-- Yeni Kayıt --":
             sid = secim.split("(")[-1].replace(")", "")
             secilen_profil = db[db['ID'] == sid].sort_values('Olcum_Tarihi', ascending=False).iloc[0]
 
     st.divider()
-    # Excel Yükleme Şablonu Uyarısı
     st.subheader("📥 Excel/CSV Yükle")
     file = st.file_uploader("Dosya seç", type=['xlsx', 'csv'])
-    if file and st.button("Yükle"):
+    if file and st.button("Sisteme Aktar"):
         df_new = pd.read_excel(file) if file.name.endswith('xlsx') else pd.read_csv(file)
         if 'ID' not in df_new.columns:
             df_new['ID'] = [f"GKD-{uuid.uuid4().hex[:6].upper()}" for _ in range(len(df_new))]
         veri_kaydet_ve_guncelle(df_new)
-        st.success("Yüklendi!"); st.rerun()
+        st.success("Aktarım Tamamlandı!"); st.rerun()
 
-# --- 5. FORM ---
-with st.form("kayit_formu"):
-    st.subheader("📝 Ölçüm Bilgileri")
+    if not db.empty:
+        st.divider()
+        towrite = io.BytesIO()
+        db.to_excel(towrite, index=False, engine='openpyxl')
+        st.download_button("📊 Veritabanını İndir", towrite.getvalue(), "gkd_veritabani.xlsx")
+
+# --- 5. VERİ GİRİŞ FORMU ---
+with st.form("form_v3"):
+    st.subheader("📋 Sporcu Ölçüm Kaydı")
     c1, c2, c3 = st.columns(3)
     with c1:
-        # ID alanı
         curr_id = st.text_input("ID", value=secilen_profil['ID'] if secilen_profil is not None else f"GKD-{uuid.uuid4().hex[:6].upper()}")
         ad = st.text_input("Ad", value=secilen_profil['Ad'] if secilen_profil is not None else "")
         soyad = st.text_input("Soyad", value=secilen_profil['Soyad'] if secilen_profil is not None else "")
@@ -173,11 +191,15 @@ with st.form("kayit_formu"):
         v_bas = datetime.strptime(str(secilen_profil['Baslama_Tarihi']), '%Y-%m-%d') if secilen_profil is not None else datetime(2020, 1, 1)
         baslama = st.date_input("Başlama Tarihi", value=v_bas)
     with c3:
-        boy = st.number_input("Boy", value=float(secilen_profil['Boy']) if secilen_profil is not None else 160.0)
-        kilo = st.number_input("Kilo", value=float(secilen_profil['Kilo']) if secilen_profil is not None else 50.0)
+        boy = st.number_input("Boy (cm)", value=float(secilen_profil['Boy']) if secilen_profil is not None else 160.0)
+        kilo = st.number_input("Kilo (kg)", value=float(secilen_profil['Kilo']) if secilen_profil is not None else 50.0)
 
     st.divider()
-    test_specs = {"5m Sprint (sn)": "min", "10m Sprint (sn)": "min", "20m Sprint (sn)": "min", "Dikey Sıçrama (cm)": "max", "SKT Sağ (sn)": "min", "SKT Sol (sn)": "min"}
+    test_specs = {
+        "5m Sprint (sn)": "min", "10m Sprint (sn)": "min", "20m Sprint (sn)": "min", 
+        "Dikey Sıçrama (cm)": "max", "SKT Sağ (sn)": "min", "SKT Sol (sn)": "min",
+        "LSKT Sağ (sn)": "min", "LSKT Sol (sn)": "min"
+    }
     
     test_sonuclari = {}
     cols = st.columns(2)
@@ -190,25 +212,23 @@ with st.form("kayit_formu"):
             best = (min(d1, d2) if d1 > 0 and d2 > 0 else max(d1, d2)) if mod == "min" else max(d1, d2)
             test_sonuclari[t_ad] = {"D1": d1, "D2": d2, "B": best}
 
-    if st.form_submit_button("KAYDET VE ANALİZ ET"):
+    if st.form_submit_button("💾 KAYDET VE ANALİZ ET"):
         q = f"{dogum.year}_Q{(dogum.month-1)//3+1}"
         row_dict = {
             "ID": curr_id, "Ad": ad, "Soyad": soyad, "Boy": boy, "Kilo": kilo, "Ceyrek": q,
-            "Dogum_Tarihi": dogum.strftime('%Y-%m-%d'), 
-            "Olcum_Tarihi": olcum_tarihi.strftime('%Y-%m-%d'),
+            "Dogum_Tarihi": dogum.strftime('%Y-%m-%d'), "Olcum_Tarihi": olcum_tarihi.strftime('%Y-%m-%d'),
             "Baslama_Tarihi": baslama.strftime('%Y-%m-%d')
         }
         for t_ad, vals in test_sonuclari.items():
             row_dict[f"{t_ad}_D1"], row_dict[f"{t_ad}_D2"], row_dict[t_ad] = vals["D1"], vals["D2"], vals["B"]
         
         veri_kaydet_ve_guncelle(pd.DataFrame([row_dict]))
-        st.success("Veritabanı güncellendi!"); st.rerun()
+        st.success("Kayıt güncellendi!"); st.rerun()
 
 # --- 6. ANALİZ PANELİ ---
 if secilen_profil is not None:
     st.divider()
-    st.header(f"📊 Analiz: {secilen_profil['Ad']} {secilen_profil['Soyad']}")
-    
+    st.header(f"📊 Performans Analizi: {secilen_profil['Ad']} {secilen_profil['Soyad']}")
     akranlar = db[db['Ceyrek'] == secilen_profil['Ceyrek']]
     analiz_datalari = []
     
@@ -225,4 +245,4 @@ if secilen_profil is not None:
     if analiz_datalari:
         st.table(pd.DataFrame(analiz_datalari))
         pdf = profesyonel_pdf_uret(secilen_profil, analiz_datalari, db[db['ID'] == secilen_profil['ID']])
-        st.download_button("📄 PDF Raporu İndir", pdf, f"Rapor_{secilen_profil['ID']}.pdf")
+        st.download_button("📄 Türkçe Karakter Uyumlu PDF İndir", pdf, f"Rapor_{secilen_profil['ID']}.pdf")
