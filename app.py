@@ -13,34 +13,33 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-# --- 1. FONT KAYDI (ARIAL.TTF KONTROLÜ) ---
+# --- 1. FONT VE SİSTEM AYARLARI ---
 st.set_page_config(page_title="GKD Performans Sistemi", layout="wide")
 
-def font_kaydet():
-    font_dosyasi = "arial.ttf"
-    font_adi = "Helvetica" # Varsayılan (hata durumunda)
-
-    if os.path.exists(font_dosyasi):
+def font_sisteme_kaydet():
+    """Ana dizindeki arial.ttf dosyasını sisteme entegre eder."""
+    font_dosya_adi = "arial.ttf"
+    
+    # 1. Öncelik: Kullanıcının ana dizine koyduğu arial.ttf
+    if os.path.exists(font_dosya_adi):
         try:
-            # Arial'i sisteme 'Arial_Tr' adıyla kaydediyoruz
-            pdfmetrics.registerFont(TTFont('Arial_Tr', font_dosyasi))
-            font_adi = 'Arial_Tr'
+            pdfmetrics.registerFont(TTFont('Arial_Turkce', font_dosya_adi))
+            return 'Arial_Turkce'
         except Exception as e:
-            st.error(f"Font kaydı sırasında hata oluştu: {e}")
-    else:
-        # Eğer arial.ttf yoksa sistem fontlarını dene
-        linux_font = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-        if os.path.exists(linux_font):
-            pdfmetrics.registerFont(TTFont('Arial_Tr', linux_font))
-            font_adi = 'Arial_Tr'
-        else:
-            st.warning("⚠️ arial.ttf bulunamadı! Lütfen dosyayı ana dizine yükleyin.")
-            
-    return font_adi
+            st.error(f"Arial fontu kaydedilirken hata: {e}")
+    
+    # 2. Öncelik: Linux Sunucu Standart Fontu (Yedek Plan)
+    linux_yolu = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    if os.path.exists(linux_yolu):
+        pdfmetrics.registerFont(TTFont('Arial_Turkce', linux_yolu))
+        return 'Arial_Turkce'
+    
+    return 'Helvetica'
 
-SECILEN_FONT = font_kaydet()
+# Global font değişkeni
+FONT_ADI = font_sisteme_kaydet()
 
-# Matplotlib için font ayarı
+# Matplotlib için font ayarı (Türkçe karakterlerin grafiklerde çıkması için)
 plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
 
@@ -56,80 +55,150 @@ def veri_oku():
         except: return pd.DataFrame()
     return pd.DataFrame()
 
-# --- 3. PDF ÜRETME (KRİTİK TÜRKÇE AYARLARI) ---
+def veri_kaydet_ve_guncelle(yeni_df):
+    mevcut = veri_oku()
+    if mevcut.empty:
+        mevcut = yeni_df
+    else:
+        for _, row in yeni_df.iterrows():
+            mask = (mevcut['ID'].astype(str) == str(row['ID'])) & \
+                   (mevcut['Olcum_Tarihi'].astype(str) == str(row['Olcum_Tarihi']))
+            if mask.any():
+                idx = mevcut.index[mask][0]
+                for col in yeni_df.columns: mevcut.at[idx, col] = row[col]
+            else:
+                mevcut = pd.concat([mevcut, pd.DataFrame([row])], ignore_index=True)
+    mevcut.to_csv(DB_FILE, index=False, encoding='utf-16')
+
+# --- 3. PDF ÜRETME MOTORU (ZORLANMIŞ TÜRKÇE) ---
 def pdf_olustur(secilen, analiz_datalari, tum_gecmis):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     
-    # Türkçe Stil Tanımları
-    # 'encoding' parametresi ReportLab'in modern sürümlerinde otomatik UTF-8'dir
-    baslik_stili = ParagraphStyle('B', fontName=SECILEN_FONT, fontSize=16, alignment=1, spaceAfter=20)
-    normal_stil = ParagraphStyle('N', fontName=SECILEN_FONT, fontSize=10)
+    # Fontu her Paragraph nesnesinde zorunlu kılan stil seti
+    pdf_stili = ParagraphStyle(
+        'Standard',
+        fontName=FONT_ADI,
+        fontSize=10,
+        leading=12,
+        alignment=0 # Sola yaslı
+    )
     
-    akis = [Paragraph("BİREYSEL PERFORMANS VE GELİŞİM RAPORU", baslik_stili)]
+    baslik_stili = ParagraphStyle(
+        'Baslik',
+        fontName=FONT_ADI,
+        fontSize=18,
+        alignment=1, # Ortalanmış
+        spaceAfter=20
+    )
+
+    akis = [Paragraph("<b>BİREYSEL PERFORMANS ANALİZ RAPORU</b>", baslik_stili)]
     
-    # Künye Tablosu
-    info = [
-        [Paragraph(f"<b>Sporcu ID:</b> {secilen['ID']}", normal_stil), 
-         Paragraph(f"<b>Grup:</b> {secilen['Ceyrek']}", normal_stil)],
-        [Paragraph(f"<b>Ad Soyad:</b> {secilen['Ad']} {secilen['Soyad']}", normal_stil), 
-         Paragraph(f"<b>Ölçüm Tarihi:</b> {secilen['Olcum_Tarihi']}", normal_stil)],
-        [Paragraph(f"<b>Boy/Kilo:</b> {secilen['Boy']}cm / {secilen['Kilo']}kg", normal_stil), 
-         Paragraph(f"<b>Başlama:</b> {secilen['Baslama_Tarihi']}", normal_stil)]
+    # Künye Tablosu (Metinler Paragraph içinde gönderiliyor)
+    info_tablo_verisi = [
+        [Paragraph(f"<b>ID:</b> {secilen['ID']}", pdf_stili), Paragraph(f"<b>Grup:</b> {secilen['Ceyrek']}", pdf_stili)],
+        [Paragraph(f"<b>Ad Soyad:</b> {secilen['Ad']} {secilen['Soyad']}", pdf_stili), Paragraph(f"<b>Tarih:</b> {secilen['Olcum_Tarihi']}", pdf_stili)],
+        [Paragraph(f"<b>Boy/Kilo:</b> {secilen['Boy']}cm / {secilen['Kilo']}kg", pdf_stili), Paragraph(f"<b>Başlama:</b> {secilen['Baslama_Tarihi']}", pdf_stili)]
     ]
-    t_info = Table(info, colWidths=[240, 240])
+    
+    t_info = Table(info_tablo_verisi, colWidths=[240, 240])
     t_info.setStyle(TableStyle([
-        ('FONTNAME', (0,0), (-1,-1), SECILEN_FONT),
+        ('FONTNAME', (0,0), (-1,-1), FONT_ADI),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
     ]))
     akis.append(t_info)
-    akis.append(Spacer(1, 15))
+    akis.append(Spacer(1, 20))
 
     # Analiz Tablosu
-    # Tablo içindeki her metni Paragraph() içine almak Türkçe karakterler için EN GÜVENLİ yoldur.
+    # Başlıklar
     tablo_verisi = [[
-        Paragraph("<b>Test Adı</b>", normal_stil), 
-        Paragraph("<b>Skor</b>", normal_stil), 
-        Paragraph("<b>Grup Ort.</b>", normal_stil), 
-        Paragraph("<b>Z-Skor</b>", normal_stil), 
-        Paragraph("<b>Durum</b>", normal_stil)
+        Paragraph("<b>Test Adı</b>", pdf_stili),
+        Paragraph("<b>Skor</b>", pdf_stili),
+        Paragraph("<b>Ort.</b>", pdf_stili),
+        Paragraph("<b>Z-Skor</b>", pdf_stili),
+        Paragraph("<b>Durum</b>", pdf_stili)
     ]]
     
+    # Veri Satırları
     for r in analiz_datalari:
         tablo_verisi.append([
-            Paragraph(str(r['Test']), normal_stil),
-            Paragraph(str(r['Skor']), normal_stil),
-            Paragraph(str(r['Grup Ort.']), normal_stil),
-            Paragraph(str(r['Z-Skor']), normal_stil),
-            Paragraph(str(r['Durum']), normal_stil)
+            Paragraph(str(r['Test']), pdf_stili),
+            Paragraph(str(r['Skor']), pdf_stili),
+            Paragraph(str(r['Grup Ort.']), pdf_stili),
+            Paragraph(str(r['Z-Skor']), pdf_stili),
+            Paragraph(str(r['Durum']), pdf_stili)
         ])
     
-    t_analiz = Table(tablo_verisi, colWidths=[160, 60, 70, 60, 100])
+    t_analiz = Table(tablo_verisi, colWidths=[150, 60, 70, 60, 100])
     t_analiz.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
         ('BACKGROUND', (0,0), (-1,0), colors.whitesmoke),
-        ('FONTNAME', (0,0), (-1,-1), SECILEN_FONT),
+        ('FONTNAME', (0,0), (-1,-1), FONT_ADI),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('ALIGN', (0,0), (-1,0), 'CENTER')
     ]))
     akis.append(t_analiz)
 
-    # Grafikler... (Önceki kodla aynı şekilde eklenebilir)
-    # [Buradaki grafik kodlarını kısa tutmak için atladım, PDF akışını tamamlar]
+    # GRAFİKLER
+    for r in analiz_datalari:
+        test_adi = r['Test']
+        fig, ax = plt.subplots(figsize=(6, 2.5))
+        sporcu_gecmis = tum_gecmis.sort_values('Olcum_Tarihi')
+        
+        if len(sporcu_gecmis) > 1:
+            ax.plot(sporcu_gecmis['Olcum_Tarihi'], sporcu_gecmis[test_adi], marker='o', color='#E63946', lw=2)
+            ax.set_title(f"{test_adi} Gelişim Grafiği", fontsize=10)
+        else:
+            z = float(r['Z-Skor'])
+            ax.barh(['Akran Ort.', 'Sporcu'], [0, z], color=['#A8DADC', '#457B9D'])
+            ax.set_xlim(-3.5, 3.5)
+            ax.axvline(0, color='black', lw=1)
+            ax.set_title(f"{test_adi} Kıyaslama Analizi", fontsize=10)
+        
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        
+        img_buf = io.BytesIO()
+        plt.savefig(img_buf, format='png', dpi=100)
+        plt.close(fig)
+        akis.append(KeepTogether([Spacer(1, 15), Image(img_buf, width=400, height=160)]))
 
     doc.build(akis)
     buf.seek(0)
     return buf
 
-# --- 4. ARAYÜZ ---
+# --- 4. ARAYÜZ (SIDEBAR VE FORM) ---
 db = veri_oku()
-st.sidebar.info(f"Aktif Font: {SECILEN_FONT}")
+secilen_profil = None
 
-# Önemli: Raporu indirirken mutlaka Paragraph() ile sarmalanmış veriyi kullanıyoruz.
-if st.button("Örnek Rapor Üret (Test)"):
+with st.sidebar:
+    st.header("⚙️ Yönetim")
+    st.info(f"Kullanılan Font: {FONT_ADI}") # Fontun başarılı yüklendiğini buradan teyit edebilirsiniz.
+    
     if not db.empty:
-        test_sporcu = db.iloc[0].to_dict()
-        # Test amaçlı dummy veri
-        analiz_test = [{"Test": "Şınav Çekme", "Skor": "20", "Grup Ort.": "18", "Z-Skor": "1.2", "Durum": "İyi"}]
-        pdf = pdf_olustur(test_sporcu, analiz_test, db)
-        st.download_button("PDF İndir", pdf, "test_raporu.pdf")
+        u_list = db.sort_values('Olcum_Tarihi', ascending=False).drop_duplicates('ID')
+        options = ["-- Yeni Kayıt --"] + [f"{r['Ad']} {r['Soyad']} ({r['ID']})" for _, r in u_list.iterrows()]
+        secim = st.selectbox("Sporcu Seç", options)
+        if secim != "-- Yeni Kayıt --":
+            sid = secim.split("(")[-1].replace(")", "")
+            secilen_profil = db[db['ID'] == sid].sort_values('Olcum_Tarihi', ascending=False).iloc[0]
+
+# --- 5. FORM VE ANALİZ DÖNGÜSÜ (ÖNCEKİ KODUNUZU BURAYA EKLEYİN) ---
+# ... (Form girişleri, test_specs, hesaplamalar vs. önceki kodla aynıdır) ...
+# Önemli olan PDF üretme butonunda pdf_olustur fonksiyonunu çağırmaktır.
+
+if secilen_profil is not None:
+    # Örnek analiz verisi oluşturma (Sizin hesaplama kodunuz buraya gelecek)
+    test_sonuclari = [
+        {"Test": "5m Sprint (sn)", "Skor": "1.250", "Grup Ort.": "1.300", "Z-Skor": "0.5", "Durum": "✅ ÜST"},
+        {"Test": "LSKT Sağ (sn)", "Skor": "4.120", "Grup Ort.": "4.500", "Z-Skor": "1.2", "Durum": "🌟 ELİT"}
+    ]
+    
+    if st.button("📄 PDF RAPORU OLUŞTUR"):
+        pdf_cikti = pdf_olustur(secilen_profil, test_sonuclari, db[db['ID'] == secilen_profil['ID']])
+        st.download_button(
+            label="💾 PDF Dosyasını Bilgisayarına İndir",
+            data=pdf_cikti,
+            file_name=f"Rapor_{secilen_profil['Ad']}_{secilen_profil['Soyad']}.pdf",
+            mime="application/pdf"
+        )
