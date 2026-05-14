@@ -14,11 +14,10 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 # --- 1. SİSTEM VE FONT YAPILANDIRMASI ---
-st.set_page_config(page_title="GKD Performans Sistemi", layout="wide")
+st.set_page_config(page_title="GKD Akademik Performans Sistemi", layout="wide")
 
 @st.cache_resource
 def font_hazirla():
-    # Dosya adınız tam olarak sistemdeki gibi (Arial.ttf)
     font_yolu = "Arial.ttf"
     if os.path.exists(font_yolu):
         try:
@@ -30,7 +29,16 @@ def font_hazirla():
 SECILEN_FONT = font_hazirla()
 DB_FILE = "gkd_akademik_veritabani.csv"
 
-# --- 2. VERİ YÖNETİMİ ---
+# --- 2. BİLİMSEL HESAPLAMA FONKSİYONU ---
+def hesapla_peak_power(kilo, sicrama_cm):
+    """Sayers Equation (1999) kullanılarak Peak Power (Watt) hesaplar."""
+    if kilo > 0 and sicrama_cm > 0:
+        # Ppeak (W) = 60.7 · jump height (cm) + 45.3 · body mass (kg) - 2055
+        power = (60.7 * sicrama_cm) + (45.3 * kilo) - 2055
+        return round(power, 2)
+    return 0.0
+
+# --- 3. VERİ YÖNETİMİ ---
 def veri_oku():
     if os.path.exists(DB_FILE):
         try:
@@ -55,42 +63,32 @@ def veri_kaydet(yeni_df):
                 mevcut = pd.concat([mevcut, pd.DataFrame([row])], ignore_index=True)
     mevcut.to_csv(DB_FILE, index=False, encoding='utf-16')
 
-# --- 3. PDF ÜRETME MOTORU (RENKLİ VE TÜRKÇE) ---
+# --- 4. PDF MOTORU ---
 def pdf_olustur(secilen, analiz_datalari, tum_gecmis):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     
-    # Stil Tanımları
     baslik_stil = ParagraphStyle('Baslik', fontName=SECILEN_FONT, fontSize=18, alignment=1, spaceAfter=20)
     normal_stil = ParagraphStyle('Normal', fontName=SECILEN_FONT, fontSize=10, leading=12)
     
     akis = [Paragraph("<b>BİREYSEL PERFORMANS VE GELİŞİM RAPORU</b>", baslik_stil)]
     
-    # Künye Tablosu
     info = [
         [Paragraph(f"<b>ID:</b> {secilen['ID']}", normal_stil), Paragraph(f"<b>Grup:</b> {secilen['Ceyrek']}", normal_stil)],
         [Paragraph(f"<b>Ad Soyad:</b> {secilen['Ad']} {secilen['Soyad']}", normal_stil), Paragraph(f"<b>Tarih:</b> {secilen['Olcum_Tarihi']}", normal_stil)],
-        [Paragraph(f"<b>Boy/Kilo:</b> {secilen['Boy']}cm / {secilen['Kilo']}kg", normal_stil), Paragraph(f"<b>Başlama:</b> {secilen['Baslama_Tarihi']}", normal_stil)]
+        [Paragraph(f"<b>Boy/Kilo:</b> {secilen['Boy']}cm / {secilen['Kilo']}kg", normal_stil), Paragraph(f"<b>Peak Power:</b> {secilen.get('Peak Power (W)', 0)} W", normal_stil)]
     ]
     t_info = Table(info, colWidths=[240, 240])
     t_info.setStyle(TableStyle([('FONTNAME', (0,0), (-1,-1), SECILEN_FONT), ('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
     akis.append(t_info)
     akis.append(Spacer(1, 15))
 
-    # Analiz Tablosu
     tablo_verisi = [[Paragraph(f"<b>{h}</b>", normal_stil) for h in ["Test Adı", "Skor", "Ort.", "Z-Skor", "Durum"]]]
     
     for r in analiz_datalari:
-        # İkonları temizle ve metne göre renk belirle
         durum_temiz = str(r['Durum']).replace("🌟", "").replace("✅", "").replace("⚪", "").replace("🆘", "").strip()
-        
-        # Duruma göre renk seçimi
-        durum_rengi = colors.black
-        if "ELİT" in durum_temiz: durum_rengi = colors.darkgreen
-        elif "ÜST" in durum_temiz: durum_rengi = colors.green
-        elif "KRİTİK" in durum_temiz: durum_rengi = colors.red
-        
-        durum_stili = ParagraphStyle('DStil', fontName=SECILEN_FONT, fontSize=10, textColor=durum_rengi, alignment=1)
+        dur_renk = colors.red if "KRİTİK" in durum_temiz else (colors.darkgreen if "ELİT" in durum_temiz else colors.black)
+        durum_stili = ParagraphStyle('DStil', fontName=SECILEN_FONT, fontSize=10, textColor=dur_renk, alignment=1)
 
         tablo_verisi.append([
             Paragraph(str(r['Test']), normal_stil),
@@ -112,44 +110,38 @@ def pdf_olustur(secilen, analiz_datalari, tum_gecmis):
     # Grafikler
     for r in analiz_datalari:
         test_adi = r['Test']
-        fig, ax = plt.subplots(figsize=(6, 2.6))
-        plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
-        
-        gecmis_verisi = tum_gecmis.sort_values('Olcum_Tarihi')
-        if len(gecmis_verisi) > 1:
+        if test_adi in tum_gecmis.columns:
+            fig, ax = plt.subplots(figsize=(6, 2.2))
+            plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
+            gecmis_verisi = tum_gecmis.sort_values('Olcum_Tarihi')
             ax.plot(gecmis_verisi['Olcum_Tarihi'], gecmis_verisi[test_adi], marker='o', color='#1f77b4', lw=2)
             ax.set_title(f"{test_adi} Gelişim Grafiği", fontsize=10)
-        else:
-            z = float(r['Z-Skor'])
-            ax.barh(['Akran', 'Sporcu'], [0, z], color=['#cccccc', '#1f77b4'])
-            ax.set_title(f"{test_adi} Kıyaslama Analizi", fontsize=10)
-            
-        plt.tight_layout()
-        img_buf = io.BytesIO()
-        plt.savefig(img_buf, format='png', dpi=110)
-        plt.close(fig)
-        akis.append(KeepTogether([Spacer(1, 15), Image(img_buf, width=420, height=170)]))
+            plt.tight_layout()
+            img_buf = io.BytesIO()
+            plt.savefig(img_buf, format='png', dpi=100)
+            plt.close(fig)
+            akis.append(KeepTogether([Spacer(1, 10), Image(img_buf, width=400, height=150)]))
 
     doc.build(akis)
     buf.seek(0)
     return buf
 
-# --- 4. STREAMLIT ARAYÜZÜ ---
+# --- 5. ANA UYGULAMA ---
 db = veri_oku()
 secilen_profil = None
 
 with st.sidebar:
-    st.info(f"Kullanılan Font: {SECILEN_FONT}")
+    st.success(f"Aktif Font: {SECILEN_FONT}")
     if not db.empty:
         u_list = db.sort_values('Olcum_Tarihi', ascending=False).drop_duplicates('ID')
         options = ["-- Yeni Kayıt --"] + [f"{r['Ad']} {r['Soyad']} ({r['ID']})" for _, r in u_list.iterrows()]
-        secim = st.selectbox("Mevcut Kayıtlar", options)
+        secim = st.selectbox("Sporcu Seç", options)
         if secim != "-- Yeni Kayıt --":
             sid = secim.split("(")[-1].replace(")", "")
             secilen_profil = db[db['ID'] == sid].sort_values('Olcum_Tarihi', ascending=False).iloc[0]
 
-with st.form("ana_form"):
-    st.header("📝 Performans Veri Girişi")
+with st.form("akademik_form"):
+    st.header("📝 Performans ve Güç Veri Girişi")
     c1, c2, c3 = st.columns(3)
     with c1:
         sid = st.text_input("ID", value=secilen_profil['ID'] if secilen_profil is not None else f"GKD-{uuid.uuid4().hex[:6].upper()}")
@@ -174,35 +166,46 @@ with st.form("ana_form"):
     cols = st.columns(2)
     for i, (t_ad, m) in enumerate(test_specs.items()):
         with cols[i % 2]:
-            val_d1 = st.number_input(f"{t_ad} D1", value=float(secilen_profil[f"{t_ad}_D1"]) if secilen_profil is not None else 0.0, format="%.3f")
-            val_d2 = st.number_input(f"{t_ad} D2", value=float(secilen_profil[f"{t_ad}_D2"]) if secilen_profil is not None else 0.0, format="%.3f")
-            best = (min(val_d1, val_d2) if val_d1 > 0 and val_d2 > 0 else max(val_d1, val_d2)) if m == "min" else max(val_d1, val_d2)
-            vals[t_ad] = {"D1": val_d1, "D2": val_d2, "B": best}
+            v1 = st.number_input(f"{t_ad} D1", value=float(secilen_profil[f"{t_ad}_D1"]) if secilen_profil is not None else 0.0, format="%.3f")
+            v2 = st.number_input(f"{t_ad} D2", value=float(secilen_profil[f"{t_ad}_D2"]) if secilen_profil is not None else 0.0, format="%.3f")
+            best = (min(v1, v2) if v1 > 0 and v2 > 0 else max(v1, v2)) if m == "min" else max(v1, v2)
+            vals[t_ad] = {"D1": v1, "D2": v2, "B": best}
+
+    # Peak Power Hesaplama
+    pp_watt = hesapla_peak_power(kilo, vals["Dikey Sıçrama (cm)"]["B"])
+    st.metric("Hesaplanan Peak Power (Sayers)", f"{pp_watt} Watt")
 
     if st.form_submit_button("✅ VERİLERİ KAYDET VE ANALİZ ET"):
-        row_data = {"ID": sid, "Ad": ad, "Soyad": soyad, "Boy": boy, "Kilo": kilo, "Ceyrek": f"{d_tar.year}_Q{(d_tar.month-1)//3+1}",
+        row_data = {"ID": sid, "Ad": ad, "Soyad": soyad, "Boy": boy, "Kilo": kilo, 
+                    "Peak Power (W)": pp_watt, "Ceyrek": f"{d_tar.year}_Q{(d_tar.month-1)//3+1}",
                     "Dogum_Tarihi": d_tar.strftime('%Y-%m-%d'), "Olcum_Tarihi": o_tar.strftime('%Y-%m-%d'), "Baslama_Tarihi": b_tar.strftime('%Y-%m-%d')}
         for t, v in vals.items(): row_data[f"{t}_D1"], row_data[f"{t}_D2"], row_data[t] = v["D1"], v["D2"], v["B"]
         veri_kaydet(pd.DataFrame([row_data]))
-        st.success("Kayıt Edildi!"); st.rerun()
+        st.success("Veriler ve Akademik Güç Değerleri Kaydedildi!"); st.rerun()
 
-# Analiz ve PDF İndirme
+# --- ANALİZ VE PDF ---
 if secilen_profil is not None:
     st.divider()
-    st.header(f"📊 Analiz: {secilen_profil['Ad']} {secilen_profil['Soyad']}")
+    st.header(f"📊 Akademik Analiz: {secilen_profil['Ad']} {secilen_profil['Soyad']}")
+    
     akranlar = db[db['Ceyrek'] == secilen_profil['Ceyrek']]
     analiz_list = []
     
-    for t_ad, m in test_specs.items():
-        skor = float(secilen_profil[t_ad])
-        seri = akranlar[t_ad].replace(0, np.nan).dropna()
-        if skor > 0 and not seri.empty:
-            ort, std = seri.mean(), (seri.std() if seri.std() > 0 else 0.1)
-            z = round(-(skor-ort)/std if m=="min" else (skor-ort)/std, 2)
-            dur = "🌟 ELİT" if z >= 2 else ("✅ ÜST" if z >= 1 else ("⚪ ORT" if z > -1 else "🆘 KRİTİK"))
-            analiz_list.append({"Test": t_ad, "Skor": f"{skor:.3f}", "Grup Ort.": round(ort,3), "Z-Skor": z, "Durum": dur})
+    # Tüm testlere Peak Power'ı da ekleyerek analiz et
+    akademik_testler = test_specs.copy()
+    akademik_testler["Peak Power (W)"] = "max"
+    
+    for t_ad, m in akademik_testler.items():
+        if t_ad in secilen_profil:
+            skor = float(secilen_profil[t_ad])
+            seri = akranlar[t_ad].replace(0, np.nan).dropna()
+            if skor > 0 and not seri.empty:
+                ort, std = seri.mean(), (seri.std() if seri.std() > 0 else 0.1)
+                z = round(-(skor-ort)/std if m=="min" else (skor-ort)/std, 2)
+                dur = "🌟 ELİT" if z >= 2 else ("✅ ÜST" if z >= 1 else ("⚪ ORT" if z > -1 else "🆘 KRİTİK"))
+                analiz_list.append({"Test": t_ad, "Skor": f"{skor:.2f}", "Grup Ort.": round(ort,2), "Z-Skor": z, "Durum": dur})
 
     if analiz_list:
         st.table(pd.DataFrame(analiz_list))
         pdf_file = pdf_olustur(secilen_profil, analiz_list, db[db['ID'] == secilen_profil['ID']])
-        st.download_button("📄 PDF RAPORUNU İNDİR", pdf_file, f"Rapor_{sid}.pdf")
+        st.download_button("📄 AKADEMİK RAPORU İNDİR (PDF)", pdf_file, f"Akademik_Rapor_{sid}.pdf")
