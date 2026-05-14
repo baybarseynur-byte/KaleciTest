@@ -18,7 +18,6 @@ st.set_page_config(page_title="GKD Performans Sistemi", layout="wide")
 
 @st.cache_resource
 def font_hazirla():
-    # Arial.ttf ana dizinde olmalı. Bulunamazsa Helvetica'ya döner (Hata vermez).
     font_yolu = "Arial.ttf"
     if os.path.exists(font_yolu):
         try:
@@ -30,7 +29,7 @@ def font_hazirla():
 SECILEN_FONT = font_hazirla()
 DB_FILE = "gkd_akademik_veritabani.csv"
 
-# --- 2. BİLİMSEL HESAPLAMA ---
+# --- 2. BİLİMSEL HESAPLAMALAR ---
 def hesapla_peak_power(kilo, sicrama_cm):
     """Sayers Equation (1999)"""
     if kilo > 0 and sicrama_cm > 0:
@@ -63,8 +62,7 @@ def veri_kaydet(yeni_df):
                 mevcut = pd.concat([mevcut, pd.DataFrame([row])], ignore_index=True)
     mevcut.to_csv(DB_FILE, index=False, encoding='utf-16')
 
-
-# BURAYA EKLE:
+# --- ARAŞTIRMACI ARAÇLARI FONKSİYONLARI ---
 def toplu_veri_yukle(yuklenen_dosya):
     try:
         if yuklenen_dosya.name.endswith('.csv'):
@@ -84,7 +82,7 @@ def excel_indir(df):
         df.to_excel(writer, index=False, sheet_name='Performans_Verileri')
     return output.getvalue()
 
-# --- 4. PDF MOTORU (PEAK POWER VE GRAFİK ENTEGRELİ) ---
+# --- 4. PDF MOTORU ---
 def pdf_olustur(secilen, analiz_datalari, tum_gecmis):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
@@ -102,12 +100,10 @@ def pdf_olustur(secilen, analiz_datalari, tum_gecmis):
     ]
     t_info = Table(info, colWidths=[240, 240])
     t_info.setStyle(TableStyle([('FONTNAME', (0,0), (-1,-1), SECILEN_FONT)]))
-    akis.append(t_info)
-    akis.append(Spacer(1, 15))
+    akis.append(t_info); akis.append(Spacer(1, 15))
 
-    # Analiz Tablosu (Peak Power Dahil)
+    # Analiz Tablosu
     tablo_verisi = [[Paragraph(f"<b>{h}</b>", normal_stil) for h in ["Test Adı", "Skor", "Ort.", "Z-Skor", "Durum"]]]
-    
     for r in analiz_datalari:
         durum_temiz = str(r['Durum']).replace("🌟", "").replace("✅", "").replace("⚪", "").replace("🆘", "").strip()
         dur_renk = colors.red if "KRİTİK" in durum_temiz else (colors.darkgreen if "ELİT" in durum_temiz else colors.black)
@@ -129,26 +125,22 @@ def pdf_olustur(secilen, analiz_datalari, tum_gecmis):
     ]))
     akis.append(t_analiz)
 
-    # Gelişim Grafikleri (Tablodaki her kalem için grafik çizilir)
+    # Gelişim Grafikleri
     for r in analiz_datalari:
         test_adi = r['Test']
         if test_adi in tum_gecmis.columns:
             try:
                 fig, ax = plt.subplots(figsize=(6, 2.5))
-                plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
                 gecmis_verisi = tum_gecmis.sort_values('Olcum_Tarihi')
-                
                 ax.plot(gecmis_verisi['Olcum_Tarihi'], gecmis_verisi[test_adi], marker='o', color='#1f77b4', lw=2)
                 ax.set_title(f"{test_adi} Gelişim Analizi", fontsize=10)
                 ax.grid(True, alpha=0.3)
-                
                 plt.tight_layout()
                 img_buf = io.BytesIO()
                 plt.savefig(img_buf, format='png', dpi=100)
                 plt.close(fig)
                 akis.append(KeepTogether([Spacer(1, 10), Image(img_buf, width=420, height=160)]))
-            except:
-                continue
+            except: continue
 
     doc.build(akis)
     buf.seek(0)
@@ -159,11 +151,24 @@ db = veri_oku()
 secilen_profil = None
 
 with st.sidebar:
-    if SECILEN_FONT == 'Helvetica':
-        st.warning("Arial.ttf bulunamadı, varsayılan font kullanılıyor.")
-    else:
-        st.success(f"Aktif Font: {SECILEN_FONT}")
-        
+    st.header("⚙️ Araştırmacı Araçları")
+    if not db.empty:
+        st.subheader("📥 Veri Dışarı Aktar")
+        csv_data = db.to_csv(index=False, encoding='utf-16').encode('utf-16')
+        st.download_button("CSV Olarak İndir", csv_data, f"Veri_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
+        try:
+            excel_data = excel_indir(db)
+            st.download_button("Excel Olarak İndir", excel_data, f"Veri_{datetime.now().strftime('%Y%m%d')}.xlsx")
+        except: st.info("Excel için xlsxwriter yüklü olmalı.")
+
+    st.divider()
+    st.subheader("📤 Toplu Veri Yükle")
+    yuklenen_dosya = st.file_uploader("Excel veya CSV", type=['csv', 'xlsx'])
+    if yuklenen_dosya and st.button("Sisteme İşle"):
+        if toplu_veri_yukle(yuklenen_dosya):
+            st.success("Veriler eklendi!"); st.rerun()
+    
+    st.divider()
     if not db.empty:
         u_list = db.sort_values('Olcum_Tarihi', ascending=False).drop_duplicates('ID')
         options = ["-- Yeni Kayıt --"] + [f"{r['Ad']} {r['Soyad']} ({r['ID']})" for _, r in u_list.iterrows()]
@@ -172,6 +177,7 @@ with st.sidebar:
             sid = secim.split("(")[-1].replace(")", "")
             secilen_profil = db[db['ID'] == sid].sort_values('Olcum_Tarihi', ascending=False).iloc[0]
 
+# --- FORM VE VERİ GİRİŞİ ---
 with st.form("akademik_form"):
     st.header("📝 Veri Girişi")
     c1, c2, c3 = st.columns(3)
@@ -193,7 +199,6 @@ with st.form("akademik_form"):
         "Dikey Sıçrama (cm)": "max", "SKT Sağ (sn)": "min", "SKT Sol (sn)": "min",
         "LSKT Sağ (sn)": "min", "LSKT Sol (sn)": "min"
     }
-    
     vals = {}
     cols = st.columns(2)
     for i, (t_ad, m) in enumerate(test_specs.items()):
@@ -203,7 +208,6 @@ with st.form("akademik_form"):
             best = (min(v1, v2) if v1 > 0 and v2 > 0 else max(v1, v2)) if m == "min" else max(v1, v2)
             vals[t_ad] = {"D1": v1, "D2": v2, "B": best}
 
-    # Peak Power Hesaplama ve Gösterim
     pp_watt = hesapla_peak_power(kilo, vals["Dikey Sıçrama (cm)"]["B"])
     st.metric("Peak Power (Watt)", f"{pp_watt} W")
 
@@ -215,57 +219,29 @@ with st.form("akademik_form"):
         veri_kaydet(pd.DataFrame([row_data]))
         st.success("Kaydedildi!"); st.rerun()
 
-# --- ANALİZ VE PDF BÖLÜMÜ ---
-# Kodunuzun en alt kısmında yer alan bu bloğu bulup şununla değiştirin:
-
+# --- ANALİZ VE PDF ---
 if secilen_profil is not None:
     st.divider()
     st.header(f"📊 Analiz: {secilen_profil['Ad']} {secilen_profil['Soyad']}")
-    
     akranlar = db[db['Ceyrek'] == secilen_profil['Ceyrek']]
     analiz_list = []
     
-    # --- BURASI KRİTİK: Peak Power'ı test listesine dahil ediyoruz ---
     akademik_testler = test_specs.copy()
-    akademik_testler["Peak Power (W)"] = "max" # Listeye zorla ekledik
+    akademik_testler["Peak Power (W)"] = "max"
     
     for t_ad, m in akademik_testler.items():
-        # Profilde bu veri var mı ve boş değil mi kontrol et
         if t_ad in secilen_profil and not pd.isna(secilen_profil[t_ad]):
             skor = float(secilen_profil[t_ad])
             seri = akranlar[t_ad].replace(0, np.nan).dropna()
-            
             if skor > 0 and not seri.empty:
                 ort, std = seri.mean(), (seri.std() if seri.std() > 0 else 0.1)
                 z = round(-(skor-ort)/std if m=="min" else (skor-ort)/std, 2)
                 dur = "🌟 ELİT" if z >= 2 else ("✅ ÜST" if z >= 1 else ("⚪ ORT" if z > -1 else "🆘 KRİTİK"))
-                
-                # Bu listeye eklenen her şey hem Tabloya hem Grafiğe gider
-                analiz_list.append({
-                    "Test": t_ad, 
-                    "Skor": f"{skor:.2f}", 
-                    "Grup Ort.": round(ort,2), 
-                    "Z-Skor": z, 
-                    "Durum": dur
-                })
+                analiz_list.append({"Test": t_ad, "Skor": f"{skor:.2f}", "Grup Ort.": round(ort,2), "Z-Skor": z, "Durum": dur})
 
     if analiz_list:
-        # 1. Ekrandaki Tablo
         st.table(pd.DataFrame(analiz_list))
-        
         try:
-            # 2. PDF Dosyasını Oluşturma
-            sporcu_gecmisi = db[db['ID'] == secilen_profil['ID']]
-            
-            # pdf_olustur fonksiyonu analiz_list üzerinden döndüğü için 
-            # Peak Power artık otomatik olarak PDF'e ve grafiklere eklenecek.
-            pdf_file = pdf_olustur(secilen_profil, analiz_list, sporcu_gecmisi)
-            
-            st.download_button(
-                label="📄 PDF RAPORU İNDİR", 
-                data=pdf_file, 
-                file_name=f"Rapor_{sid}.pdf", 
-                mime="application/pdf"
-            )
-        except Exception as e:
-            st.error(f"PDF oluşturulurken bir hata oluştu: {e}")
+            pdf_file = pdf_olustur(secilen_profil, analiz_list, db[db['ID'] == secilen_profil['ID']])
+            st.download_button("📄 PDF RAPORU İNDİR", pdf_file, f"Rapor_{sid}.pdf", "application/pdf")
+        except Exception as e: st.error(f"PDF Hatası: {e}")
