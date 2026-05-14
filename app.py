@@ -194,7 +194,9 @@ with st.form("akademik_form"):
         veri_kaydet(pd.DataFrame([row_data]))
         st.success("Kaydedildi!"); st.rerun()
 
-# --- ANALİZ VE PDF ---
+# --- ANALİZ VE PDF BÖLÜMÜ ---
+# Kodunuzun en alt kısmında yer alan bu bloğu bulup şununla değiştirin:
+
 if secilen_profil is not None:
     st.divider()
     st.header(f"📊 Analiz: {secilen_profil['Ad']} {secilen_profil['Soyad']}")
@@ -202,25 +204,47 @@ if secilen_profil is not None:
     akranlar = db[db['Ceyrek'] == secilen_profil['Ceyrek']]
     analiz_list = []
     
-    # Peak Power'ı test listesine dahil et
+    # --- BURASI KRİTİK: Peak Power'ı test listesine dahil ediyoruz ---
     akademik_testler = test_specs.copy()
-    akademik_testler["Peak Power (W)"] = "max"
+    akademik_testler["Peak Power (W)"] = "max" # Listeye zorla ekledik
     
     for t_ad, m in akademik_testler.items():
+        # Profilde bu veri var mı ve boş değil mi kontrol et
         if t_ad in secilen_profil and not pd.isna(secilen_profil[t_ad]):
             skor = float(secilen_profil[t_ad])
             seri = akranlar[t_ad].replace(0, np.nan).dropna()
+            
             if skor > 0 and not seri.empty:
                 ort, std = seri.mean(), (seri.std() if seri.std() > 0 else 0.1)
                 z = round(-(skor-ort)/std if m=="min" else (skor-ort)/std, 2)
                 dur = "🌟 ELİT" if z >= 2 else ("✅ ÜST" if z >= 1 else ("⚪ ORT" if z > -1 else "🆘 KRİTİK"))
-                analiz_list.append({"Test": t_ad, "Skor": f"{skor:.2f}", "Grup Ort.": round(ort,2), "Z-Skor": z, "Durum": dur})
+                
+                # Bu listeye eklenen her şey hem Tabloya hem Grafiğe gider
+                analiz_list.append({
+                    "Test": t_ad, 
+                    "Skor": f"{skor:.2f}", 
+                    "Grup Ort.": round(ort,2), 
+                    "Z-Skor": z, 
+                    "Durum": dur
+                })
 
     if analiz_list:
+        # 1. Ekrandaki Tablo
         st.table(pd.DataFrame(analiz_list))
+        
         try:
+            # 2. PDF Dosyasını Oluşturma
             sporcu_gecmisi = db[db['ID'] == secilen_profil['ID']]
+            
+            # pdf_olustur fonksiyonu analiz_list üzerinden döndüğü için 
+            # Peak Power artık otomatik olarak PDF'e ve grafiklere eklenecek.
             pdf_file = pdf_olustur(secilen_profil, analiz_list, sporcu_gecmisi)
-            st.download_button("📄 PDF RAPORU İNDİR", pdf_file, f"Rapor_{sid}.pdf", "application/pdf")
+            
+            st.download_button(
+                label="📄 PDF RAPORU İNDİR", 
+                data=pdf_file, 
+                file_name=f"Rapor_{sid}.pdf", 
+                mime="application/pdf"
+            )
         except Exception as e:
-            st.error(f"PDF Hatası: {e}")
+            st.error(f"PDF oluşturulurken bir hata oluştu: {e}")
