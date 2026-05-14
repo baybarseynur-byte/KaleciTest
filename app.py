@@ -62,10 +62,7 @@ def veri_kaydet(yeni_df):
             else:
                 mevcut = pd.concat([mevcut, pd.DataFrame([row])], ignore_index=True)
     mevcut.to_csv(DB_FILE, index=False, encoding='utf-16')
-    # --- VERİ YÖNETİMİ BÖLÜMÜ ---
-def veri_kaydet(yeni_df):
-    # ... mevcut kodun ...
-    mevcut.to_csv(DB_FILE, index=False, encoding='utf-16')
+
 
 # BURAYA EKLE:
 def toplu_veri_yukle(yuklenen_dosya):
