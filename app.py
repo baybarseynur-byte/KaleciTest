@@ -62,6 +62,30 @@ def veri_kaydet(yeni_df):
             else:
                 mevcut = pd.concat([mevcut, pd.DataFrame([row])], ignore_index=True)
     mevcut.to_csv(DB_FILE, index=False, encoding='utf-16')
+    # --- VERİ YÖNETİMİ BÖLÜMÜ ---
+def veri_kaydet(yeni_df):
+    # ... mevcut kodun ...
+    mevcut.to_csv(DB_FILE, index=False, encoding='utf-16')
+
+# BURAYA EKLE:
+def toplu_veri_yukle(yuklenen_dosya):
+    try:
+        if yuklenen_dosya.name.endswith('.csv'):
+            yeni_df = pd.read_csv(yuklenen_dosya, encoding='utf-16')
+        else:
+            yeni_df = pd.read_excel(yuklenen_dosya)
+        yeni_df.columns = yeni_df.columns.str.strip()
+        veri_kaydet(yeni_df)
+        return True
+    except Exception as e:
+        st.error(f"Yükleme hatası: {e}")
+        return False
+
+def excel_indir(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Performans_Verileri')
+    return output.getvalue()
 
 # --- 4. PDF MOTORU (PEAK POWER VE GRAFİK ENTEGRELİ) ---
 def pdf_olustur(secilen, analiz_datalari, tum_gecmis):
